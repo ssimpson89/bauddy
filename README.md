@@ -57,9 +57,13 @@ shows what's next:
 | `?` | show every key |
 | `b` | pick a baud rate |
 | `d` | detect the baud rate |
+| `r` | reconnect to the port |
 | `l` | start or stop a log |
-| `q` | quit |
+| `c` | clear the screen |
 | `B` | send BREAK (Cisco ROMMON, Linux SysRq) |
+| `S` | tell a remote shell the window size |
+| `q` | quit |
+| `esc` | back to the console |
 
 Lowercase keys act on bauddy. Capitals send something to the device.
 

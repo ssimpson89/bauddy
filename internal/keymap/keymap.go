@@ -33,7 +33,11 @@ type Binding struct {
 	Short  string // status line label, 1-2 words; set only for keys listed there
 	Help   string // one line for the help overlay
 	Sends  bool   // sends something to the device (capital letters, by convention)
+	Keep   int    // on a narrow status line, higher stays longer; KeepAlways never goes
 }
+
+// KeepAlways marks a key the status line always shows.
+const KeepAlways = 100
 
 // DefaultEscapeKey switches from console mode to command mode.
 // ctrl+] is the telnet tradition and is almost never needed by a device.
@@ -51,16 +55,18 @@ func New(esc string) Keymap {
 	return Keymap{
 		Escape: esc,
 		Commands: []Binding{
-			{Key: "?", Action: ActHelp, Short: "help", Help: "Show every key"},
-			{Key: "b", Action: ActBaud, Short: "baud", Help: "Pick a baud rate"},
-			{Key: "d", Action: ActDetect, Short: "detect", Help: "Detect the baud rate (listens; asks before sending Enter)"},
-			{Key: "l", Action: ActLog, Short: "log", Help: "Start or stop logging to a file (includes earlier output)"},
-			{Key: "c", Action: ActClear, Help: "Clear the screen"},
-			{Key: "r", Action: ActReconnect, Help: "Close and reopen the port"},
-			{Key: "q", Action: ActQuit, Short: "quit", Help: "Quit"},
-			{Key: "esc", Action: ActLeaveCommand, Help: "Back to the console"},
-			{Key: "B", Action: ActBreak, Help: "Send BREAK (ROMMON, SysRq; can change a Linux login prompt's baud)", Sends: true},
-			{Key: "S", Action: ActSyncSize, Help: "Type `stty rows R cols C` (at a shell prompt)", Sends: true},
+			// In status line order: the link (b, d, r), then output (l, c),
+			// then keys that send to the device. q and esc sit apart on the right.
+			{Key: "?", Action: ActHelp, Short: "help", Help: "Show every key", Keep: KeepAlways},
+			{Key: "b", Action: ActBaud, Short: "baud", Help: "Pick a baud rate", Keep: 6},
+			{Key: "d", Action: ActDetect, Short: "detect", Help: "Detect the baud rate (listens; asks before sending Enter)", Keep: 7},
+			{Key: "r", Action: ActReconnect, Short: "reconnect", Help: "Close and reopen the port", Keep: 3},
+			{Key: "l", Action: ActLog, Short: "log", Help: "Start or stop logging to a file (includes earlier output)", Keep: 5},
+			{Key: "c", Action: ActClear, Short: "clear", Help: "Clear the screen", Keep: 2},
+			{Key: "q", Action: ActQuit, Short: "quit", Help: "Quit", Keep: KeepAlways},
+			{Key: "esc", Action: ActLeaveCommand, Short: "back", Help: "Back to the console", Keep: KeepAlways},
+			{Key: "B", Action: ActBreak, Short: "break", Help: "Send BREAK (ROMMON, SysRq; can change a Linux login prompt's baud)", Sends: true, Keep: 4},
+			{Key: "S", Action: ActSyncSize, Short: "resize", Help: "Type `stty rows R cols C` so the remote shell fits (at a shell prompt)", Sends: true, Keep: 1},
 			{Key: esc, Action: ActSendEscapeKey, Help: "Send " + esc + " itself", Sends: true},
 		},
 	}
