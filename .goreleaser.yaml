@@ -1,0 +1,74 @@
+# Releases are built by .github/workflows/release.yml when a v* tag is pushed.
+# Try it locally with: goreleaser release --snapshot --clean
+version: 2
+
+project_name: bauddy
+
+builds:
+  # Linux and Windows are pure Go.
+  - id: bauddy
+    main: ./cmd/bauddy
+    binary: bauddy
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, windows]
+    goarch: [amd64, arm64, arm]
+    goarm: ["7"] # Raspberry Pi console servers
+    ignore:
+      - goos: windows
+        goarch: arm
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  # macOS needs cgo: the serial library lists ports through IOKit. So
+  # releases are built on a macOS runner.
+  - id: bauddy-darwin
+    main: ./cmd/bauddy
+    binary: bauddy
+    env:
+      - CGO_ENABLED=1
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+    files: [LICENSE, README.md]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:", "^ci:"]
+
+# Signing and notarizing macOS binaries needs a paid Apple Developer account.
+# It stays off until the MACOS_* secrets exist; see RELEASING.md.
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids: [bauddy-darwin]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
+
+release:
+  github:
+    owner: ssimpson89
+    name: bauddy
