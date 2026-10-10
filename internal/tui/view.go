@@ -31,7 +31,9 @@ var (
 	// text on light themes: cAmber and cDim have poor contrast on white. The
 	// status bar sets its own background and works on any theme.
 	cAmberOnLight = lipgloss.Color("#8A5200")
-	cDimOnLight   = lipgloss.Color("#5C5C5C")
+
+	cDivider    = lipgloss.Color("#8A5200") // the command bar's divider, on amber
+	cDimOnLight = lipgloss.Color("#5C5C5C")
 )
 
 // overlayStyles returns the box, key and dim styles for the help and baud
@@ -233,20 +235,128 @@ func shortKey(k string) string {
 	return k
 }
 
-// commandLine turns the whole bar amber and lists the main keys, dropping
-// the least important ones if the window is narrow. `?` always survives.
+// barKey is one key on the command bar.
+type barKey struct {
+	key, label string
+	keep       int  // higher stays longer on a narrow bar
+	sends      bool // sends something to the device: goes after the divider
+	help       bool // the ? key, which reads "more" once anything is hidden
+}
+
+// commandLine is the amber bar in command mode.
 func (m *Model) commandLine(w int) string {
-	var items [][]seg
+	var keys []barKey
+	var quit, back barKey
 	for _, b := range m.keys.Commands {
-		if b.Short != "" {
-			label := b.Short
-			if b.Action == keymap.ActLog && m.log != nil {
-				label = "stop log"
+		if b.Short == "" {
+			continue
+		}
+		k := barKey{key: b.Key, label: b.Short, keep: b.Keep, sends: b.Sends, help: b.Action == keymap.ActHelp}
+		switch b.Action {
+		case keymap.ActQuit:
+			quit = k
+			continue
+		case keymap.ActLeaveCommand:
+			back = k
+			continue
+		case keymap.ActLog:
+			if m.log != nil {
+				k.label = "stop log"
 			}
-			items = append(items, hint(b.Key, label))
+		case keymap.ActReconnect: // unplugged: reconnect is what you need now
+			if m.state != serialx.Connected {
+				k.keep = keymap.KeepAlways - 1
+			}
+		}
+		keys = append(keys, k)
+	}
+	return commandBar(w, keys, quit, back, m.note.text)
+}
+
+// noteMin is the narrowest a message on the command bar is cut to before
+// it's dropped.
+const noteMin = 12
+
+// commandBar lays out the command bar: keys on the left in a fixed order,
+// then any message, then quit and back pinned on the right. When it doesn't
+// fit, it gives way in this order: the lowest-keep keys (the order never
+// changes; keys after a dropped one close up), then the message is shortened
+// and dropped, then "esc back" becomes "esc", then "q quit" becomes "q".
+func commandBar(w int, keys []barKey, quit, back barKey, note string) string {
+	shown := make([]bool, len(keys))
+	var drop []int // indexes of keys that may go, least needed first
+	for i, k := range keys {
+		shown[i] = true
+		if k.keep < keymap.KeepAlways {
+			drop = append(drop, i)
 		}
 	}
-	return amber(w, m.note.text, items, "back")
+	slices.SortStableFunc(drop, func(a, b int) int { return keys[a].keep - keys[b].keep })
+
+	quitFull, backFull := true, true
+	for {
+		left := barLeft(keys, shown)
+		right := barRight(note, quit, back, quitFull, backFull)
+		over := width(left) + 1 + width(right) - w // +1: at least one cell between them
+		switch {
+		case over <= 0:
+			return line(cAmber, w, left, right)
+		case len(drop) > 0:
+			shown[drop[0]], drop = false, drop[1:]
+		case note != "" && lipgloss.Width(note) > noteMin:
+			note = ansi.Truncate(note, max(noteMin, lipgloss.Width(note)-over), "…")
+		case note != "":
+			note = ""
+		case backFull:
+			backFull = false
+		case quitFull:
+			quitFull = false
+		default:
+			return line(cAmber, w, left, right) // cut at the edge
+		}
+	}
+}
+
+// barLeft renders the shown keys, with a divider before the first one that
+// sends to the device.
+func barLeft(keys []barKey, shown []bool) []seg {
+	hidden := slices.Contains(shown, false)
+	out := []seg{{" ", cOnAmber, false}}
+	divided := false
+	for i, k := range keys {
+		if !shown[i] {
+			continue
+		}
+		if k.sends && !divided {
+			out = append(out, seg{"│  ", cDivider, false})
+			divided = true
+		}
+		label := k.label
+		if k.help && hidden {
+			label = "more"
+		}
+		out = append(out, hint(k.key, label)...)
+	}
+	return out
+}
+
+// barRight renders the message and the pinned quit and back keys.
+func barRight(note string, quit, back barKey, quitFull, backFull bool) []seg {
+	var out []seg
+	if note != "" {
+		out = append(out, seg{note + "   ", cOnAmber, true})
+	}
+	if quitFull {
+		out = append(out, hint(quit.key, quit.label)...)
+	} else {
+		out = append(out, seg{quit.key + "  ", cOnAmber, true})
+	}
+	if backFull {
+		out = append(out, seg{back.key, cOnAmber, true}, seg{" " + back.label + " ", cOnAmber, false})
+	} else {
+		out = append(out, seg{back.key + " ", cOnAmber, true})
+	}
+	return out
 }
 
 func (m *Model) helpBox() string {
