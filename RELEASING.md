@@ -4,9 +4,12 @@ Releases are built by GoReleaser in GitHub Actions
 (`.github/workflows/release.yml`) when a tag starting with `v` is pushed.
 
 ```
-git tag v0.1.0
+git tag -s v0.1.0 -m "v0.1.0"
 git push origin v0.1.0
 ```
+
+Tags are signed (`-s`). A tag with a suffix, such as `v0.0.1-beta.1` or
+`v0.2.0-rc.1`, is published as a pre-release.
 
 The workflow runs the tests, builds Linux (amd64, arm64, armv7), Windows
 (amd64, arm64) and macOS (amd64, arm64) binaries, and publishes them with
