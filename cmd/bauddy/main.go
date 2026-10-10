@@ -3,8 +3,8 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"runtime/debug"
-	"strings"
 
 	"github.com/ssimpson89/bauddy/internal/cli"
 )
@@ -13,6 +13,13 @@ import (
 var (
 	version = ""
 	commit  = ""
+)
+
+var (
+	semver = regexp.MustCompile(`^\d+\.\d+\.\d+`)
+	// pseudo matches versions Go makes up for untagged commits, such as
+	// v0.0.0-20261010160946-61805dd34b0f, and local builds with changes (+dirty).
+	pseudo = regexp.MustCompile(`\d{14}-[0-9a-f]{12}|\+dirty`)
 )
 
 func main() {
@@ -26,8 +33,8 @@ func main() {
 func buildVersion() string {
 	v, c := version, commit
 	if info, ok := debug.ReadBuildInfo(); ok {
-		if mv := info.Main.Version; v == "" && mv != "" && mv != "(devel)" && !strings.Contains(mv, "-0.") {
-			v = mv // a tagged module version; pseudo-versions like v0.0.0-2026...-abc are skipped
+		if mv := info.Main.Version; v == "" && mv != "" && mv != "(devel)" && !pseudo.MatchString(mv) {
+			v = mv // a tagged module version, from `go install ...@v1.2.3`
 		}
 		for _, s := range info.Settings {
 			if s.Key == "vcs.revision" && c == "" && len(s.Value) >= 7 {
@@ -38,8 +45,8 @@ func buildVersion() string {
 	switch {
 	case v == "":
 		v = "dev"
-	case v[0] >= '0' && v[0] <= '9':
-		v = "v" + v
+	case semver.MatchString(v):
+		v = "v" + v // GoReleaser passes 1.2.3
 	}
 	if c != "" && v == "dev" {
 		v += " (" + c + ")"
