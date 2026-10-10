@@ -60,6 +60,15 @@ func TestCommandBarIsAlwaysTheWindowWidth(t *testing.T) {
 	}
 }
 
+func TestCommandBarKeepsQuestionQuitAndEscWhole(t *testing.T) {
+	m := newBarModel()
+	for w := 12; w <= 300; w++ {
+		if s := bar(m, w); !pinned(s) {
+			t.Errorf("width %d: ?, q or esc cut: %q", w, s)
+		}
+	}
+}
+
 func TestCommandBarAtEveryWidth(t *testing.T) {
 	m := newBarModel()
 	for w := 16; w <= 200; w++ {
@@ -82,7 +91,9 @@ func TestCommandBarAtEveryWidth(t *testing.T) {
 		for _, k := range dropOrder {
 			all = all && has(s, k)
 		}
-		if all != has(s, "? help") || all == has(s, "? more") {
+		// ? reads help only when every key shows; otherwise more, or bare
+		// on the narrowest bars.
+		if all != has(s, "? help") || (all && has(s, "? more")) {
 			t.Errorf("width %d: ? should read help only when every key shows: %q", w, s)
 		}
 		if strings.Contains(s, "│") != (has(s, "B break") || has(s, "S resize")) {

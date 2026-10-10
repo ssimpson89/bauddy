@@ -281,7 +281,8 @@ const noteMin = 12
 // then any message, then quit and back pinned on the right. When it doesn't
 // fit, it gives way in this order: the lowest-keep keys (the order never
 // changes; keys after a dropped one close up), then the message is shortened
-// and dropped, then "esc back" becomes "esc", then "q quit" becomes "q".
+// and dropped, then "esc back" becomes "esc", "q quit" becomes "q", and "?"
+// loses its label, so ? q and esc stay whole down to 12 cells.
 func commandBar(w int, keys []barKey, quit, back barKey, note string) string {
 	shown := make([]bool, len(keys))
 	var drop []int // indexes of keys that may go, least needed first
@@ -293,9 +294,9 @@ func commandBar(w int, keys []barKey, quit, back barKey, note string) string {
 	}
 	slices.SortStableFunc(drop, func(a, b int) int { return keys[a].keep - keys[b].keep })
 
-	quitFull, backFull := true, true
+	quitFull, backFull, helpLabel := true, true, true
 	for {
-		left := barLeft(keys, shown)
+		left := barLeft(keys, shown, helpLabel)
 		right := barRight(note, quit, back, quitFull, backFull)
 		over := width(left) + 1 + width(right) - w // +1: at least one cell between them
 		switch {
@@ -311,6 +312,8 @@ func commandBar(w int, keys []barKey, quit, back barKey, note string) string {
 			backFull = false
 		case quitFull:
 			quitFull = false
+		case helpLabel:
+			helpLabel = false
 		default:
 			return line(cAmber, w, left, right) // cut at the edge
 		}
@@ -318,8 +321,8 @@ func commandBar(w int, keys []barKey, quit, back barKey, note string) string {
 }
 
 // barLeft renders the shown keys, with a divider before the first one that
-// sends to the device.
-func barLeft(keys []barKey, shown []bool) []seg {
+// sends to the device. Without helpLabel, the ? key is shown bare.
+func barLeft(keys []barKey, shown []bool, helpLabel bool) []seg {
 	hidden := slices.Contains(shown, false)
 	out := []seg{{" ", cOnAmber, false}}
 	divided := false
@@ -332,7 +335,11 @@ func barLeft(keys []barKey, shown []bool) []seg {
 			divided = true
 		}
 		label := k.label
-		if k.help && hidden {
+		switch {
+		case k.help && !helpLabel:
+			out = append(out, seg{k.key + "  ", cOnAmber, true})
+			continue
+		case k.help && hidden:
 			label = "more"
 		}
 		out = append(out, hint(k.key, label)...)
