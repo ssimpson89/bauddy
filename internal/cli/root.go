@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -26,6 +27,13 @@ import (
 const defaultBaud = 115200
 
 const noPorts = "no serial ports found; is the adapter plugged in?"
+
+// noPortsHint adds how to name a port yourself, with an example in this
+// system's style, for a port bauddy can't see (a pseudo-terminal, say).
+func noPortsHint() string {
+	example := map[string]string{"darwin": "/dev/cu.usbserial-1410", "windows": "COM3"}[runtime.GOOS]
+	return noPorts + " You can also name the port: bauddy " + cmp.Or(example, "/dev/ttyUSB0")
+}
 
 type rootOpts struct {
 	baud    int
@@ -193,7 +201,7 @@ func resolvePort(arg string, store *profile.Store) (serialx.PortInfo, error) {
 	case len(usb) == 1:
 		return usb[0], nil
 	case len(ports) == 0:
-		return serialx.PortInfo{}, errors.New(noPorts)
+		return serialx.PortInfo{}, errors.New(noPortsHint())
 	case len(ports) == 1:
 		return ports[0], nil
 	}
@@ -268,7 +276,7 @@ func newListCmd() *cobra.Command {
 				return err
 			}
 			if len(ports) == 0 {
-				fmt.Println(noPorts)
+				fmt.Println(noPortsHint())
 				return nil
 			}
 			store, err := profile.Load()
