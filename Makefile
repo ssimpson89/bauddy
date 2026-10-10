@@ -1,5 +1,7 @@
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null)
-LDFLAGS := -s -w -X main.version=$(VERSION)
+# A tagged commit builds as that version; anything else builds as "dev (commit)".
+VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null)
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 
 .PHONY: build test lint run snapshot clean
 
