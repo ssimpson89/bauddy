@@ -50,7 +50,7 @@ Everything you type goes to the device, so Ctrl-C, Esc and the arrow keys work
 as usual. When you want bauddy itself, press `ctrl+]` and the bottom line
 shows what's next:
 
-![the keys, after pressing ctrl+]](docs/keys.png)
+![the keys, after pressing ctrl+\]](docs/keys.png)
 
 | Key | What it does |
 |---|---|
@@ -76,6 +76,7 @@ Lowercase keys act on bauddy. Capitals send something to the device.
   also set it yourself with `-f 7E1`.
 - **Logs** go in the current folder unless you say otherwise:
   `bauddy --log=~/console-logs` logs from the start into that folder.
+- **Windows** builds are included but haven't been tested yet.
 - **Arduino and ESP32 boards** may reset when bauddy connects. That's the
   board, not bauddy.
 

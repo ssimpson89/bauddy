@@ -72,3 +72,6 @@ release:
   github:
     owner: ssimpson89
     name: bauddy
+  # Tags with a suffix, like v0.0.1-beta.1 or v0.2.0-rc.1, are published as
+  # pre-releases and never marked Latest.
+  prerelease: auto
