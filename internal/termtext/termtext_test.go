@@ -1,6 +1,9 @@
 package termtext
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCleaner(t *testing.T) {
 	cases := []struct {
@@ -30,5 +33,16 @@ func TestCleaner(t *testing.T) {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+func TestLongLineIsBounded(t *testing.T) {
+	var c Cleaner
+	for range 100 {
+		c.Feed([]byte(strings.Repeat("\xfe", 4096))) // garbage, no newline
+	}
+	c.Feed([]byte("end"))
+	if p := c.Partial(); len(p) > lineMax || !strings.HasSuffix(p, "end") {
+		t.Errorf("partial line is %d bytes, ending %q", len(p), p[len(p)-3:])
 	}
 }

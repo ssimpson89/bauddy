@@ -6,7 +6,6 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,7 +15,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
-	"go.bug.st/serial"
 
 	"github.com/ssimpson89/bauddy/internal/keymap"
 	"github.com/ssimpson89/bauddy/internal/profile"
@@ -26,13 +24,11 @@ import (
 
 const defaultBaud = 115200
 
-const noPorts = "no serial ports found; is the adapter plugged in?"
-
 // noPortsHint adds how to name a port yourself, with an example in this
 // system's style, for a port bauddy can't see (a pseudo-terminal, say).
 func noPortsHint() string {
 	example := map[string]string{"darwin": "/dev/cu.usbserial-1410", "windows": "COM3"}[runtime.GOOS]
-	return noPorts + " You can also name the port: bauddy " + cmp.Or(example, "/dev/ttyUSB0")
+	return serialx.ErrNoPorts.Error() + " You can also name the port: bauddy " + cmp.Or(example, "/dev/ttyUSB0")
 }
 
 type rootOpts struct {
@@ -80,7 +76,7 @@ awkward on your keyboard, use --escape ctrl+t (or set BAUDDY_ESCAPE).`,
 	cmd.Flags().StringVar(&o.name, "name", "", "save a name for this adapter (see README)")
 	_ = cmd.Flags().MarkHidden("name")
 
-	cmd.AddCommand(newListCmd(), newKeysCmd(o))
+	cmd.AddCommand(newListCmd(), newKeysCmd(o), newMCPCmd(version))
 	return cmd
 }
 
@@ -125,7 +121,7 @@ func run(arg string, o *rootOpts, version string) error {
 
 	sess, err := serialx.Open(port.OpenPath(), baud, framing)
 	if err != nil {
-		return friendlyOpenError(port.OpenPath(), err)
+		return serialx.OpenError(port.OpenPath(), err)
 	}
 	defer sess.Close()
 	save := func(baud int, f serialx.Framing) error { return store.RememberLine(port.Key, baud, f.String()) }
@@ -173,39 +169,17 @@ func resolvePort(arg string, store *profile.Store) (serialx.PortInfo, error) {
 	if err != nil {
 		return serialx.PortInfo{}, err
 	}
-	if arg != "" {
-		if p, ok := serialx.Find(ports, arg); ok {
-			return p, nil
-		}
-		if key, ok := store.KeyForName(arg); ok {
-			for _, p := range ports {
-				if p.Key == key {
-					return p, nil
-				}
-			}
-			if strings.HasPrefix(key, "/") {
-				return serialx.Manual(key), nil // saved for a path that isn't enumerated
-			}
-			return serialx.PortInfo{}, fmt.Errorf("%s's adapter isn't plugged in; 'bauddy list' shows what is", arg)
-		}
-		return serialx.Manual(arg), nil // not enumerated (e.g. a pty); try it anyway
-	}
-
-	var usb []serialx.PortInfo
-	for _, p := range ports {
-		if p.USB {
-			usb = append(usb, p)
-		}
-	}
+	p, err := serialx.Choose(arg, ports, store.KeyForName)
+	var several *serialx.SeveralError
 	switch {
-	case len(usb) == 1:
-		return usb[0], nil
-	case len(ports) == 0:
-		return serialx.PortInfo{}, errors.New(noPortsHint())
-	case len(ports) == 1:
-		return ports[0], nil
+	case errors.As(err, &several):
+		return choosePort(several.Ports)
+	case errors.Is(err, serialx.ErrNoPorts):
+		return p, errors.New(noPortsHint())
+	case errors.Is(err, serialx.ErrUnplugged):
+		return p, fmt.Errorf("%w; 'bauddy list' shows what is", err)
 	}
-	return choosePort(ports)
+	return p, err
 }
 
 // choosePort asks which of several ports to use.
@@ -245,25 +219,6 @@ func saveName(store *profile.Store, key, name string) error {
 
 func describe(p serialx.PortInfo) string {
 	return strings.TrimSpace(p.USBID() + " " + p.Product)
-}
-
-// friendlyOpenError explains the common reasons a port won't open, with
-// what to do about them.
-func friendlyOpenError(path string, err error) error {
-	var pe *serial.PortError
-	if errors.As(err, &pe) {
-		switch pe.Code() {
-		case serial.PortBusy:
-			return fmt.Errorf("%s is in use by another program (screen, minicom, another bauddy); close it and try again", path)
-		case serial.PermissionDenied:
-			return fmt.Errorf("no permission to open %s; on Linux, add yourself to the group that owns it "+
-				"(usually dialout, uucp on Arch): sudo usermod -aG dialout $USER, then log out and back in", path)
-		}
-	}
-	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%s doesn't exist; 'bauddy list' shows the ports", path)
-	}
-	return fmt.Errorf("can't open %s: %w", path, err)
 }
 
 func newListCmd() *cobra.Command {

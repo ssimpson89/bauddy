@@ -32,6 +32,16 @@ func (f Framing) String() string {
 	return fmt.Sprintf("%d%s%s", f.DataBits, parityLetters[f.Parity], stop)
 }
 
+// LineSettings describes a rate and framing, e.g. "9600 baud" or
+// "9600 baud 7E1". Framing is only mentioned when it isn't 8N1.
+func LineSettings(baud int, f Framing) string {
+	s := fmt.Sprintf("%d baud", baud)
+	if f != Framing8N1 {
+		s += " " + f.String()
+	}
+	return s
+}
+
 // ParseFraming reads "8N1", "7E1", "8E1", "7O1", "8N2" and the like.
 func ParseFraming(s string) (Framing, error) {
 	s = strings.ToUpper(strings.TrimSpace(s))

@@ -23,7 +23,7 @@ type Log struct {
 
 // Open appends to path, creating it if needed, and writes a header.
 func Open(path, header string) (*Log, error) {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600) // logs can hold configs and secrets
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func Resolve(arg, device string, now time.Time) (string, error) {
 	case err == nil && fi.IsDir():
 		arg = filepath.Join(arg, Name(device, now))
 	case err != nil && filepath.Ext(arg) == "":
-		if err := os.MkdirAll(arg, 0o755); err != nil {
+		if err := os.MkdirAll(arg, 0o700); err != nil {
 			return "", err
 		}
 		arg = filepath.Join(arg, Name(device, now))

@@ -10,6 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/ssimpson89/bauddy/internal/termtext"
 )
 
 // history is earlier output as plain text, shown in place of the console
@@ -135,7 +137,7 @@ func (m *Model) findMatches() {
 	if h.query == "" {
 		return
 	}
-	h.pattern = searchPattern(h.query)
+	h.pattern = termtext.Pattern(h.query)
 	for i, line := range h.shown {
 		if h.pattern.MatchString(line) {
 			h.matches = append(h.matches, i)
@@ -164,16 +166,6 @@ func (m *Model) selectMatch(i int) {
 	}
 	h.match = min(max(0, i), len(h.matches)-1)
 	m.scrollTo(h.matches[h.match] - m.pageHeight()/2)
-}
-
-// searchPattern matches q literally, with smart case: all lowercase matches
-// any case ("error" finds "ERROR"); any capital matches exactly.
-func searchPattern(q string) *regexp.Regexp {
-	expr := regexp.QuoteMeta(q)
-	if q == strings.ToLower(q) {
-		expr = "(?i)" + expr
-	}
-	return regexp.MustCompile(expr)
 }
 
 var (
