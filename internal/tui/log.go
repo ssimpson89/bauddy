@@ -93,6 +93,29 @@ func (m *Model) toggleLog() tea.Cmd {
 	return m.setNote("log saved: " + filepath.Base(path))
 }
 
+// done reports something that worked: a marker in the log and a note on the
+// status line. If the log can't be written, its error stays on the status
+// line instead, so logging never stops unnoticed.
+func (m *Model) done(note, mark string) tea.Cmd {
+	logging := m.log != nil
+	cmd := m.logMark(mark)
+	if logging && m.log == nil {
+		return cmd
+	}
+	return tea.Batch(cmd, m.setNote(note))
+}
+
+// failed reports something that went wrong, on the status line and in the
+// log, and says if logging stopped along the way.
+func (m *Model) failed(text string) tea.Cmd {
+	logging := m.log != nil
+	cmd := m.logMark(text)
+	if logging && m.log == nil {
+		text += "; logging stopped too"
+	}
+	return tea.Batch(cmd, m.setError(text))
+}
+
 // logMark writes a marker line to the log, if one is open.
 func (m *Model) logMark(msg string) tea.Cmd {
 	if m.log == nil {

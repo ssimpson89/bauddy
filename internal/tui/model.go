@@ -387,11 +387,13 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		if err := m.sess.Break(breakDuration); err != nil {
 			return m, m.setError("can't send BREAK: " + err.Error())
 		}
-		return m, tea.Batch(m.logMark("sent BREAK"), m.setNote("break sent"))
+		return m, m.done("break sent", "sent BREAK")
 	case keymap.ActSyncSize:
 		w, h := m.emu.Width(), m.emu.Height()
-		_, _ = fmt.Fprintf(m.sess, "stty rows %d cols %d\r", h, w)
-		return m, tea.Batch(m.logMark(fmt.Sprintf("sent window size %dx%d", w, h)), m.setNote(fmt.Sprintf("size %dx%d sent", w, h)))
+		if _, err := fmt.Fprintf(m.sess, "stty rows %d cols %d\r", h, w); err != nil {
+			return m, m.setError("can't send the window size: " + err.Error())
+		}
+		return m, m.done(fmt.Sprintf("size %dx%d sent", w, h), fmt.Sprintf("sent window size %dx%d", w, h))
 	case keymap.ActClear:
 		_, _ = m.emu.Write([]byte("\x1b[2J\x1b[H")) // clear screen, cursor home
 	case keymap.ActLog:
@@ -435,7 +437,7 @@ func (m *Model) applyBaud(b int) (tea.Model, tea.Cmd) {
 		return m, m.setError(fmt.Sprintf("can't set %d baud: %v", b, err))
 	}
 	m.meter.Reset()
-	return m, tea.Batch(m.logMark(m.lineSettings()), m.setNote(m.lineSettings()), m.save())
+	return m, tea.Batch(m.done(m.lineSettings(), m.lineSettings()), m.save())
 }
 
 // startDetect runs baud detection in the background. Without probe it only
@@ -470,7 +472,7 @@ func (m *Model) detectDone(msg detectDoneMsg) tea.Cmd {
 	}
 	m.meter.Reset()
 	found := m.lineSettings()
-	return tea.Batch(m.logMark(found+" (detected)"), m.output(msg.Heard), m.setNote("detected "+found), m.save())
+	return tea.Batch(m.output(msg.Heard), m.done("detected "+found, found+" (detected)"), m.save())
 }
 
 // lineSettings describes the rate and framing, e.g. "9600 baud" or

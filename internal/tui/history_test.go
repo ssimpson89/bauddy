@@ -175,7 +175,7 @@ func TestHistoryHighlightsAnyText(t *testing.T) {
 	for _, c := range []struct{ line, query, hit string }{
 		{"ȺȺȺȺ link down", "down", "down"},
 		{"İİİİ link down", "down", "down"},
-		{"KKKK fan ERROR", "error", "ERROR"}, // Kelvin sign
+		{"\u212a\u212a\u212a\u212a fan ERROR", "error", "ERROR"}, // Kelvin sign: 3 bytes, lowercases to 1
 	} {
 		m := historyModel(0, 200, 24)
 		m.hist.lines = []string{c.line}

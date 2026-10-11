@@ -136,7 +136,7 @@ func (m *Model) pasteDone(msg pasteDoneMsg) tea.Cmd {
 		if se.Unentered {
 			text += "; ctrl+u clears the line"
 		}
-		return tea.Batch(m.logMark(text), m.setError(text))
+		return m.failed(text)
 	default:
 		return m.abandonPaste(msg.err.Error())
 	}
@@ -146,15 +146,19 @@ func (m *Model) pasteDone(msg pasteDoneMsg) tea.Cmd {
 func (m *Model) stopPaste() tea.Cmd {
 	job := m.halt()
 	text := fmt.Sprintf("paste stopped after %d of %d lines; a half-typed line may remain (ctrl+u clears it)", job.next, len(job.lines))
-	m.note = note{text: text, kind: noteSticky}
-	return m.logMark(text)
+	logging := m.log != nil
+	cmd := m.logMark(text)
+	if !logging || m.log != nil { // if the log write failed, its error shows instead
+		m.note = note{text: text, kind: noteSticky}
+	}
+	return cmd
 }
 
 // abandonPaste stops the paste because something went wrong.
 func (m *Model) abandonPaste(why string) tea.Cmd {
 	job := m.halt()
 	text := fmt.Sprintf("paste stopped at line %d of %d: %s", job.next+1, len(job.lines), why)
-	return tea.Batch(m.logMark(text), m.setError(text))
+	return m.failed(text)
 }
 
 // halt cancels the paste and waits up to a second for the pacer to stop
