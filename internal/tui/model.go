@@ -87,7 +87,7 @@ type Model struct {
 	log      *logfile.Log     // nil when not logging
 	logs     []string         // every log file written this session
 
-	history // earlier output, for scrolling back and searching
+	hist history // earlier output, for scrolling back and searching
 
 	paste   *pasteJob     // nil when no paste is in progress
 	confirm *confirmPaste // a risky paste awaiting an answer
@@ -131,7 +131,7 @@ func New(opt Options) (*Model, error) {
 	if opt.Recheck {
 		m.recheckUntil = time.Now().Add(recheckWithin)
 	}
-	m.emu.SetScrollbackSize(10000)
+	m.emu.SetScrollbackSize(1) // history keeps earlier output; 0 would mean the default, 10,000 lines
 	if opt.LogPath != "" {
 		msg, err := m.startLog()
 		if err != nil {
@@ -215,7 +215,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.emu.Resize(m.width, max(1, m.height-1))
-		m.scrollTo(m.top) // keep history's view in range
+		m.scrollTo(m.hist.top) // keep history's view in range
 		return m, nil
 
 	case eventMsg:
@@ -248,7 +248,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.detectDone(msg)
 
 	case tea.PasteMsg:
-		if m.mode == modeHistory && m.editing {
+		if m.mode == modeHistory && m.hist.editing {
 			m.typeSearch(msg.Content)
 			return m, nil
 		}
@@ -266,9 +266,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
-	case tea.MouseWheelMsg:
-		m.historyWheel(msg)
-		return m, nil
 	}
 	return m, nil
 }

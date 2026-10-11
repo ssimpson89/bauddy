@@ -82,10 +82,8 @@ Lowercase keys act on bauddy. Capitals send something to the device.
   also set it yourself with `-f 7E1`.
 - **Logs** go in the current folder unless you say otherwise:
   `bauddy --log=~/console-logs` logs from the start into that folder.
-  Each log begins with the device, port, line settings and time. A log
-  records what the device sends, and devices echo most of what you type, so
-  a password typed as part of a command (such as `enable secret …`) ends up
-  in it. Passwords typed at a `Password:` prompt aren't echoed, so they don't.
+  A log records what the device sends, including the commands it echoes
+  back, so a password typed in a command (`enable secret …`) ends up in it.
 - **Windows** builds are included but haven't been tested yet.
 - **Arduino and ESP32 boards** may reset when bauddy connects. That's the
   board, not bauddy.

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -21,8 +22,7 @@ const historyLinesMax = 10000
 // otherwise in the history that the next log starts with.
 func (m *Model) output(b []byte) tea.Cmd {
 	_, _ = m.emu.Write(b)
-	m.screen.Feed(b)
-	m.rememberLines(m.text.Feed(b))
+	m.rememberLines(m.screen.Feed(b))
 	if m.log == nil {
 		m.unlogged = append(m.unlogged, b...)
 		if over := len(m.unlogged) - unloggedMax; over > 0 {
@@ -44,23 +44,11 @@ func (m *Model) startLog() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	l, err := logfile.Open(path, "bauddy log started")
+	header := fmt.Sprintf("bauddy log: %s (%s) at %s, started %s",
+		m.opt.Name, m.sess.Path(), m.lineSettings(), now.Format("2006-01-02 15:04:05"))
+	l, err := logfile.Open(path, header)
 	if err != nil {
 		return "", err
-	}
-	// Record enough context for a log to stand on its own. Keystrokes aren't
-	// logged, only what the device sends back.
-	for _, mark := range []string{
-		"device: " + m.opt.Name,
-		"port: " + m.sess.Path(),
-		"line: " + m.lineSettings(),
-		"started: " + now.Format(time.RFC3339),
-	} {
-		if err := l.Mark(mark); err != nil {
-			_ = l.Close()
-			m.log = nil
-			return "", err
-		}
 	}
 	if len(m.unlogged) > 0 {
 		_ = l.Write(m.unlogged)
@@ -80,11 +68,11 @@ func (m *Model) rememberLines(b []byte) {
 		return
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
-		m.lines = append(m.lines, line)
-		m.linesTotal++
+		m.hist.lines = append(m.hist.lines, line)
+		m.hist.linesTotal++
 	}
-	if over := len(m.lines) - historyLinesMax; over > 0 {
-		m.lines = m.lines[over:]
+	if over := len(m.hist.lines) - historyLinesMax; over > 0 {
+		m.hist.lines = m.hist.lines[over:]
 	}
 }
 
