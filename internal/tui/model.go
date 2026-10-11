@@ -81,7 +81,7 @@ type Model struct {
 	recheckUntil time.Time // until then, garbage means the saved rate is wrong
 	quiet        bool      // connected, but nothing has arrived yet
 
-	heard    bool             // any output has arrived
+	heard    bool             // any output has arrived (including what detection heard)
 	unlogged []byte           // output since the last log, written at the start of the next one
 	screen   termtext.Cleaner // tracks the cursor line, e.g. the prompt
 	log      *logfile.Log     // nil when not logging
@@ -274,7 +274,6 @@ func (m *Model) event(e serialx.Event) tea.Cmd {
 	var cmds []tea.Cmd
 	if len(e.Data) > 0 {
 		cmds = append(cmds, m.output(e.Data))
-		m.heard, m.quiet = true, false
 		if m.mode == modeProbeOffer {
 			m.mode = modeConsole // the device spoke after all
 		}
@@ -368,6 +367,10 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		return m, m.setNote(fmt.Sprintf("%s isn't a command; ? shows the keys", key))
 	}
 	m.mode = modeConsole
+	if m.detecting && act.UsesPort() {
+		m.note = note{text: "detecting baud… (" + key + " must wait)", kind: noteSticky}
+		return m, nil
+	}
 	switch act {
 	case keymap.ActLeaveCommand:
 	case keymap.ActSendEscapeKey:
@@ -437,7 +440,8 @@ func (m *Model) applyBaud(b int) (tea.Model, tea.Cmd) {
 		return m, m.setError(fmt.Sprintf("can't set %d baud: %v", b, err))
 	}
 	m.meter.Reset()
-	return m, tea.Batch(m.done(m.lineSettings(), m.lineSettings()), m.save())
+	set := m.lineSettings()
+	return m, tea.Batch(m.done(set, set), m.save())
 }
 
 // startDetect runs baud detection in the background. Without probe it only

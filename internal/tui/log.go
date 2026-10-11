@@ -21,6 +21,10 @@ const historyLinesMax = 10000
 // output shows device bytes and records them: in the log if one is open,
 // otherwise in the history that the next log starts with.
 func (m *Model) output(b []byte) tea.Cmd {
+	if len(b) == 0 {
+		return nil
+	}
+	m.heard, m.quiet = true, false
 	_, _ = m.emu.Write(b)
 	m.rememberLines(m.screen.Feed(b))
 	if m.log == nil {
