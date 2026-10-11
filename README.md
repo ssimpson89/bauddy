@@ -59,7 +59,8 @@ shows what's next:
 | `d` | detect the baud rate |
 | `r` | reconnect to the port |
 | `l` | start or stop a log |
-| `/` | search the console output (the last 10,000 lines) |
+| `h` | scroll back through earlier output (the last 10,000 lines) |
+| `/` | search earlier output |
 | `c` | clear the screen |
 | `B` | send BREAK (Cisco ROMMON, Linux SysRq) |
 | `S` | tell a remote shell the window size |

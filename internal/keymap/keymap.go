@@ -24,6 +24,7 @@ const (
 	ActLog
 	ActReconnect
 	ActQuit
+	ActHistory
 	ActSearch
 )
 
@@ -56,14 +57,15 @@ func New(esc string) Keymap {
 	return Keymap{
 		Escape: esc,
 		Commands: []Binding{
-			// In status line order: the link (b, d, r), then output (l, /, c),
+			// In status line order: the link (b, d, r), then output (l, h, c),
 			// then keys that send to the device. q and esc sit apart on the right.
 			{Key: "?", Action: ActHelp, Short: "help", Help: "Show every key", Keep: KeepAlways},
 			{Key: "b", Action: ActBaud, Short: "baud", Help: "Pick a baud rate", Keep: 7},
 			{Key: "d", Action: ActDetect, Short: "detect", Help: "Detect the baud rate (listens; asks before sending Enter)", Keep: 8},
 			{Key: "r", Action: ActReconnect, Short: "reconnect", Help: "Close and reopen the port", Keep: 3},
 			{Key: "l", Action: ActLog, Short: "log", Help: "Start or stop logging to a file (includes earlier output)", Keep: 6},
-			{Key: "/", Action: ActSearch, Short: "search", Help: "Search the console output since bauddy started (last 10,000 lines)", Keep: 5},
+			{Key: "h", Action: ActHistory, Short: "history", Help: "Scroll back through earlier output (last 10,000 lines)", Keep: 5},
+			{Key: "/", Action: ActSearch, Help: "Search earlier output"},
 			{Key: "c", Action: ActClear, Short: "clear", Help: "Clear the screen", Keep: 2},
 			{Key: "q", Action: ActQuit, Short: "quit", Help: "Quit", Keep: KeepAlways},
 			{Key: "esc", Action: ActLeaveCommand, Short: "back", Help: "Back to the console", Keep: KeepAlways},

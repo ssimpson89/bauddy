@@ -34,10 +34,10 @@ func newBarModel() *Model { return &Model{keys: keymap.New(keymap.DefaultEscapeK
 
 // The left-hand keys from least to most needed: the drop order the Keep
 // values in keymap.New give.
-var dropOrder = []string{"S resize", "c clear", "r reconnect", "B break", "/ search", "l log", "b baud", "d detect"}
+var dropOrder = []string{"S resize", "c clear", "r reconnect", "B break", "h history", "l log", "b baud", "d detect"}
 
 // The left-hand keys in the order the bar shows them.
-var shownOrder = []string{"? help", "b baud", "d detect", "r reconnect", "l log", "/ search", "c clear", "B break", "S resize"}
+var shownOrder = []string{"? help", "b baud", "d detect", "r reconnect", "l log", "h history", "c clear", "B break", "S resize"}
 
 // pinned reports whether s shows ?, q and esc, spelled out or not.
 func pinned(s string) bool {

@@ -105,14 +105,15 @@ func (m *Model) View() tea.View {
 		body = overlay(m.width, paneH, m.helpBox())
 	case modeBaud:
 		body = overlay(m.width, paneH, m.baudBox())
-	case modeSearch, modeSearchResults:
-		body = overlay(m.width, paneH, m.searchBox())
+	case modeHistory:
+		body = m.historyView(paneH)
 	default:
 		body = m.emu.Render()
 	}
 
 	v := tea.NewView(body + "\n" + m.statusLine())
 	v.AltScreen = true
+	v.MouseMode = m.mouseMode()
 	if m.mode == modeConsole { // no cursor over overlays
 		pos := m.emu.CursorPosition()
 		v.Cursor = tea.NewCursor(pos.X, pos.Y)
@@ -165,10 +166,8 @@ func (m *Model) statusLine() string {
 		return amber(w, m.confirm.text(), [][]seg{hint("enter", "send"), hint("l", "log and send")}, "cancel")
 	case modeProbeOffer:
 		return amber(w, "nothing heard.", [][]seg{hint("enter", "send Enter at each baud rate")}, "skip")
-	case modeSearch:
-		return amber(w, "search", [][]seg{hint("enter", "show")}, "cancel")
-	case modeSearchResults:
-		return amber(w, "search", [][]seg{hint("n", "older"), hint("N", "newer"), hint("/", "edit")}, "close")
+	case modeHistory:
+		return m.historyBar(w)
 	}
 	return m.mainLine(w)
 }

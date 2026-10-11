@@ -10,23 +10,23 @@ import (
 	"github.com/ssimpson89/bauddy/internal/logfile"
 )
 
-// historyMax is how much earlier output a new log starts with, so turning
+// unloggedMax is how much earlier output a new log starts with, so turning
 // logging on late still captures what already happened.
-const historyMax = 1 << 20
+const unloggedMax = 1 << 20
 
-// searchLinesMax matches the terminal emulator's scrollback size.
-const searchLinesMax = 10000
+// historyLinesMax is how many lines of earlier output history keeps.
+const historyLinesMax = 10000
 
 // output shows device bytes and records them: in the log if one is open,
 // otherwise in the history that the next log starts with.
 func (m *Model) output(b []byte) tea.Cmd {
 	_, _ = m.emu.Write(b)
 	m.screen.Feed(b)
-	m.rememberSearchLines(m.search.Feed(b))
+	m.rememberLines(m.text.Feed(b))
 	if m.log == nil {
-		m.history = append(m.history, b...)
-		if over := len(m.history) - historyMax; over > 0 {
-			m.history = m.history[over:]
+		m.unlogged = append(m.unlogged, b...)
+		if over := len(m.unlogged) - unloggedMax; over > 0 {
+			m.unlogged = m.unlogged[over:]
 		}
 		return nil
 	}
@@ -62,10 +62,10 @@ func (m *Model) startLog() (string, error) {
 			return "", err
 		}
 	}
-	if len(m.history) > 0 {
-		_ = l.Write(m.history)
+	if len(m.unlogged) > 0 {
+		_ = l.Write(m.unlogged)
 		_ = l.Mark("logging turned on; output above was captured before that")
-		m.history = nil
+		m.unlogged = nil
 	}
 	m.log = l
 	if len(m.logs) == 0 || m.logs[len(m.logs)-1] != path {
@@ -74,15 +74,16 @@ func (m *Model) startLog() (string, error) {
 	return "logging to " + filepath.Base(path), nil
 }
 
-// rememberSearchLines retains the plain-text console history used by search.
-func (m *Model) rememberSearchLines(b []byte) {
+// rememberLines keeps completed lines of output, as plain text, for history.
+func (m *Model) rememberLines(b []byte) {
 	if len(b) == 0 {
 		return
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
 		m.lines = append(m.lines, line)
+		m.linesTotal++
 	}
-	if over := len(m.lines) - searchLinesMax; over > 0 {
+	if over := len(m.lines) - historyLinesMax; over > 0 {
 		m.lines = m.lines[over:]
 	}
 }

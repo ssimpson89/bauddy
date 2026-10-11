@@ -5,7 +5,6 @@ package tui
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strconv"
 	"time"
@@ -23,14 +22,13 @@ import (
 type mode int
 
 const (
-	modeConsole       mode = iota // every key goes to the device
-	modeCommand                   // next key is a bauddy command
-	modeHelp                      // help overlay
-	modeBaud                      // baud picker overlay
-	modePasteConfirm              // asking before a risky paste
-	modeProbeOffer                // detection heard nothing; offering to send Enter
-	modeSearch                    // editing a console search
-	modeSearchResults             // showing a console search result
+	modeConsole      mode = iota // every key goes to the device
+	modeCommand                  // next key is a bauddy command
+	modeHelp                     // help overlay
+	modeBaud                     // baud picker overlay
+	modePasteConfirm             // asking before a risky paste
+	modeProbeOffer               // detection heard nothing; offering to send Enter
+	modeHistory                  // scrolling back through earlier output
 )
 
 // Options configures the TUI.
@@ -84,17 +82,12 @@ type Model struct {
 	quiet        bool      // connected, but nothing has arrived yet
 
 	heard    bool             // any output has arrived
-	history  []byte           // output since the last log, written at the start of the next one
+	unlogged []byte           // output since the last log, written at the start of the next one
 	screen   termtext.Cleaner // tracks the cursor line, e.g. the prompt
-	search   termtext.Cleaner // turns received output into searchable lines
-	lines    []string         // newest searchLinesMax completed console lines
-	query    string
-	pattern  *regexp.Regexp // the query as a pattern; nil when it's empty
-	searched []string       // the lines as they were when the query last changed
-	matches  []int          // indexes into searched, oldest first
-	match    int            // selected index in matches
-	log      *logfile.Log   // nil when not logging
-	logs     []string       // every log file written this session
+	log      *logfile.Log     // nil when not logging
+	logs     []string         // every log file written this session
+
+	history // earlier output, for scrolling back and searching
 
 	paste   *pasteJob     // nil when no paste is in progress
 	confirm *confirmPaste // a risky paste awaiting an answer
@@ -222,6 +215,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.emu.Resize(m.width, max(1, m.height-1))
+		m.scrollTo(m.top) // keep history's view in range
 		return m, nil
 
 	case eventMsg:
@@ -254,6 +248,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.detectDone(msg)
 
 	case tea.PasteMsg:
+		if m.mode == modeHistory && m.editing {
+			m.typeSearch(msg.Content)
+			return m, nil
+		}
 		if m.mode != modeConsole || m.paste != nil {
 			return m, m.setNote("can't paste right now")
 		}
@@ -267,6 +265,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseWheelMsg:
+		m.historyWheel(msg)
+		return m, nil
 	}
 	return m, nil
 }
@@ -324,10 +326,8 @@ func (m *Model) handleKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.confirmKey(key)
 	case modeProbeOffer:
 		return m.probeKey(k, key)
-	case modeSearch:
-		return m.searchKey(k, key)
-	case modeSearchResults:
-		return m.searchResultKey(key)
+	case modeHistory:
+		return m.historyKey(k, key)
 	}
 	return m.commandKey(k, key)
 }
@@ -377,8 +377,10 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		m.sendKey(k)
 	case keymap.ActHelp:
 		m.mode = modeHelp
+	case keymap.ActHistory:
+		m.openHistory(false)
 	case keymap.ActSearch:
-		m.startSearch()
+		m.openHistory(true)
 	case keymap.ActBaud:
 		m.mode = modeBaud
 		m.baudCursor = max(0, slices.Index(baudChoices, m.sess.Baud()))
