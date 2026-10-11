@@ -4,6 +4,10 @@ bauddy is a serial console for servers, switches and routers. Plug in a USB
 console cable, run `bauddy`, and you're on the console. It works out the
 port and baud rate for you, and the keys you need are always on screen.
 
+It's also an MCP server: an AI agent such as Claude can connect to the
+console, run commands and read the output, and bauddy asks you before it
+sends anything that could reboot or wipe the device.
+
 ![bauddy connected to a switch](docs/screenshot.png)
 
 ## What it does
@@ -23,6 +27,10 @@ port and baud rate for you, and the keys you need are always on screen.
 - **Pastes carefully.** Pasting a config sends it a line at a time and waits
   for the device to catch up. It stops at the first error and asks before
   pasting anything that could reboot or wipe the device.
+- **Lets an AI agent help (MCP).** `bauddy mcp` gives Claude, or any other
+  Model Context Protocol client, the console: "the switch on my console
+  cable isn't passing traffic, take a look". See
+  [Use it with an AI agent](#use-it-with-an-ai-agent-mcp-server).
 
 ## Install
 
@@ -68,6 +76,54 @@ shows what's next:
 | `esc` | back to the console |
 
 Lowercase keys act on bauddy. Capitals send something to the device.
+
+## Use it with an AI agent (MCP server)
+
+`bauddy mcp` is a Model Context Protocol (MCP) server for serial consoles. It
+lets an AI agent such as Claude use the console: find the port, detect the
+baud rate, run commands and read the output. It's new, so treat it as
+experimental. Add it to Claude Code with:
+
+```
+claude mcp add --scope user bauddy -- bauddy mcp
+```
+
+Then ask something like "my switch on the console cable isn't passing
+traffic, take a look". The agent can connect, run commands and read the
+output. Commands go through the same careful paste, so they arrive intact
+and stop at the first error or question.
+
+- Some things need your approval, and bauddy asks you directly, not the
+  agent:
+  - rebooting
+  - erasing
+  - saving or committing the configuration
+  - upgrades
+  - `debug`
+  - clearing BGP sessions or console lines
+  - BREAK
+  - answering the device's own `[confirm]` questions
+  - anything typed at a bootloader prompt
+
+  If your MCP client can't ask you, bauddy refuses, unless you start it with
+  `bauddy mcp --allow-risky`.
+- That check is a safety net, not a guarantee. It doesn't ask about
+  configuration changes such as shutting an interface or changing a route,
+  which can cut you off too, and aliases or scripts can get past it. Read
+  what the agent wants to run before you allow it.
+- Everything the device prints goes to the agent and into the log,
+  including any passwords in the configuration. Logs go in
+  `~/.local/state/bauddy/logs` (`%LocalAppData%\bauddy\logs` on Windows),
+  readable only by you. Use `--log DIR` to choose another folder, or
+  `--no-log` to turn logging off.
+- The port can only be open in one program at a time. Close bauddy before
+  the agent connects, and ask the agent to disconnect when you want it back.
+- For Claude Desktop, add this to `claude_desktop_config.json`, with the full
+  path to `bauddy`:
+
+  ```json
+  { "mcpServers": { "bauddy": { "command": "/usr/local/bin/bauddy", "args": ["mcp"] } } }
+  ```
 
 ## Good to know
 

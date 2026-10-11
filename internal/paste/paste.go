@@ -40,16 +40,130 @@ func Lines(text string) []string {
 	return lines
 }
 
-var dangerous = regexp.MustCompile(`(?i)^\s*(reload|write erase|erase|format|delete|factory-?reset|` +
-	`request system (reboot|halt|power-off|zeroize)|load (override|factory-default)|configure replace|` +
-	`clear config|crypto key zeroize|copy\s+\S+\s+start|boot system|execute (factory-?reset|reboot)|` +
-	`/system (reset-configuration|reboot)|reboot|poweroff|halt|shutdown -[hr]|init [06]|rm -rf)\b`)
+// dangerous matches commands, as Commands returns them, that can reboot a
+// device or erase or replace its configuration or software.
+var dangerous = regexp.MustCompile(`^((reload|write erase|erase|format|delete|factory-?reset|reboot|poweroff|halt|` +
+	`mkfs\S*|wipefs|(tel)?init [06]|request system (reboot|halt|power-off|zeroize|software add)|` +
+	`request vmhost (reboot|halt|power-off)|request (restart|shutdown) system|request platform software package install|` +
+	`load (override|factory-default)|configure (replace|factory-default)|crypto key zeroize|` +
+	`boot (system|nxos|kickstart)|install (all|add|activate)|redundancy force-switchover|system switchover|` +
+	`/?system (reset-configuration|reboot|shutdown)|systemctl( -\S+)* (reboot|poweroff|halt|kexec)|` +
+	`shutdown (now|-[hrp]|\+)|rm -(rf|fr)|racadm (serveraction|racresetcfg))\b|` +
+	`clear config|copy \S+ (nvram:)?start|execute (factory|reboot|shutdown|restore|formatlogdisk|erase-disk)|` +
+	`dd .*of=/dev/|ipmitool .*(chassis power (off|cycle|reset)|mc reset)|` +
+	`!(!|-?\d+|\??[\w./-]+)$)`) // shell history recall (!!, !-1, !reb): no telling what it runs
+
+// abbreviated lists dangerous commands as IOS-style CLIs accept them, with
+// each word shortened to no less than its minimum ("rel" is reload, "wr er"
+// is write erase). "*" stands for any word.
+var abbreviated = [][]struct {
+	word string
+	min  int
+}{
+	{{"reload", 3}},
+	{{"erase", 3}},
+	{{"delete", 3}},
+	{{"format", 4}},
+	{{"write", 2}, {"erase", 2}},
+	{{"copy", 3}, {"*", 1}, {"startup-config", 2}},
+	{{"configure", 4}, {"replace", 3}},
+	{{"boot", 4}, {"system", 3}},
+	{{"request", 3}, {"system", 3}, {"reboot", 3}},
+	{{"execute", 3}, {"reboot", 3}},
+}
+
+var (
+	// chain splits shell command chains and substitutions.
+	chain = regexp.MustCompile("&&|\\|\\||[;|`]|\\$\\(")
+	// assignment sets a shell variable for the command after it.
+	assignment = regexp.MustCompile(`^[a-z_][a-z0-9_]*=`)
+	// wrappers run the command that follows them: do (IOS, from config
+	// mode), run (Junos, VyOS), sudo and the like. Not sh, which is show
+	// on Cisco-style CLIs.
+	wrappers = map[string]bool{"do": true, "run": true, "sudo": true, "doas": true, "su": true, "exec": true,
+		"command": true, "nohup": true, "time": true, "bash": true, "env": true, "eval": true, "xargs": true,
+		"busybox": true}
+)
+
+// Commands splits a line into the commands it runs, in lower case with
+// single spaces: a shell chain is split up, and wrappers (sudo -u root),
+// quotes (bash -c 'reboot') and paths (/sbin/reboot) are removed.
+func Commands(line string) []string {
+	var cmds []string
+	for _, part := range chain.Split(strings.ToLower(line), -1) {
+		w := strings.Fields(part)
+		for len(w) > 0 {
+			if assignment.MatchString(w[0]) { // MODE=x reboot, env A=1 reboot
+				w = w[1:]
+				continue
+			}
+			if !wrappers[strings.Trim(w[0], `'"\`)] {
+				break
+			}
+			w = w[1:]
+			for len(w) > 0 && strings.HasPrefix(w[0], "-") { // the wrapper's options
+				if (w[0] == "-u" || w[0] == "-g") && len(w) > 1 {
+					w = w[1:] // and the user or group after it
+				}
+				w = w[1:]
+			}
+		}
+		if len(w) == 0 {
+			continue
+		}
+		w[0] = strings.Trim(w[0], `'"\`)
+		if i := strings.LastIndex(w[0], "/"); i > 0 {
+			w[0] = w[0][i+1:]
+		}
+		cmds = append(cmds, strings.Trim(strings.Join(w, " "), `'"`))
+	}
+	return cmds
+}
+
+// Dangerous reports whether line runs a command that can reboot a device or
+// erase or replace its configuration, spelled out or abbreviated.
+func Dangerous(line string) bool {
+	for _, cmd := range Commands(line) {
+		if dangerousCommand(cmd) {
+			return true
+		}
+	}
+	return false
+}
+
+func dangerousCommand(cmd string) bool {
+	words := strings.Fields(cmd)
+	if len(words) == 2 && words[1] == "cancel" && abbreviates(words[0], "reload", 3) {
+		return false // undoes "reload in 10"
+	}
+	if dangerous.MatchString(cmd) {
+		return true
+	}
+next:
+	for _, c := range abbreviated {
+		if len(words) < len(c) {
+			continue
+		}
+		for i, w := range c {
+			if w.word != "*" && !abbreviates(words[i], w.word, w.min) {
+				continue next
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// abbreviates reports whether typed is word, shortened to no less than min.
+func abbreviates(typed, word string, min int) bool {
+	return len(typed) >= min && strings.HasPrefix(word, typed)
+}
 
 // Risky reports why a paste deserves a confirmation, or "" if it doesn't:
 // a dangerous command first, then a ?, then sheer length.
 func Risky(lines []string) string {
 	for i, l := range lines {
-		if dangerous.MatchString(l) {
+		if Dangerous(l) {
 			return fmt.Sprintf("line %d: %s", i+1, strings.TrimSpace(l))
 		}
 	}
@@ -336,6 +450,10 @@ func (r *run) recv(b []byte, ls *lineSend) error {
 	}
 	return nil
 }
+
+// AtLogin reports whether line, the cursor line, asks for a username or
+// password.
+func AtLogin(line string) bool { return login.MatchString(line) }
 
 // isPrompt reports whether s, the cursor line, is the device waiting for
 // input: a login or password prompt, or a short line ending in # > $ or %

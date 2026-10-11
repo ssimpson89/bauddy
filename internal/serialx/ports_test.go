@@ -1,6 +1,11 @@
 package serialx
 
-import "testing"
+import (
+	"errors"
+	"io/fs"
+	"strings"
+	"testing"
+)
 
 func TestAssignKeys(t *testing.T) {
 	ports := []PortInfo{
@@ -35,5 +40,51 @@ func TestFind(t *testing.T) {
 	}
 	if _, ok := Find(ports, "ttyUSB9"); ok {
 		t.Error("Find(ttyUSB9) matched")
+	}
+}
+
+func TestChoose(t *testing.T) {
+	usb := PortInfo{Path: "/dev/ttyUSB0", Key: "usb:0403:6001:A1", USB: true}
+	builtin := PortInfo{Path: "/dev/ttyS0", Key: "/dev/ttyS0"}
+	saved := map[string]string{"core": "usb:0403:6001:A1", "pty": "/dev/pts/7", "gone": "usb:1a86:7523:X"}
+	named := func(n string) (string, bool) { k, ok := saved[n]; return k, ok }
+	for _, c := range []struct {
+		arg   string
+		ports []PortInfo
+		want  string
+		err   error
+	}{
+		{"", []PortInfo{usb, builtin}, "/dev/ttyUSB0", nil}, // the lone USB adapter
+		{"", []PortInfo{builtin}, "/dev/ttyS0", nil},
+		{"", nil, "", ErrNoPorts},
+		{"ttyS0", []PortInfo{usb, builtin}, "/dev/ttyS0", nil},
+		{"core", []PortInfo{usb, builtin}, "/dev/ttyUSB0", nil},
+		{"pty", nil, "/dev/pts/7", nil},
+		{"gone", []PortInfo{usb}, "", ErrUnplugged},
+		{"/dev/pts/3", nil, "/dev/pts/3", nil}, // not enumerated: try it anyway
+	} {
+		p, err := Choose(c.arg, c.ports, named)
+		if p.Path != c.want || !errors.Is(err, c.err) {
+			t.Errorf("Choose(%q) = %q, %v; want %q, %v", c.arg, p.Path, err, c.want, c.err)
+		}
+	}
+	two := []PortInfo{usb, {Path: "/dev/ttyUSB1", USB: true}}
+	var several *SeveralError
+	if _, err := Choose("", two, named); !errors.As(err, &several) || len(several.Ports) != 2 {
+		t.Errorf("two adapters: got %v, want a SeveralError listing both", err)
+	}
+}
+
+func TestOpenError(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{&fs.PathError{Op: "open", Path: "/dev/ttyUSB9", Err: fs.ErrNotExist}, "doesn't exist; 'bauddy list'"},
+		{errors.New("boom"), "can't open /dev/ttyUSB9: boom"},
+	} {
+		if got := OpenError("/dev/ttyUSB9", c.err).Error(); !strings.Contains(got, c.want) {
+			t.Errorf("got %q, want it to contain %q", got, c.want)
+		}
 	}
 }

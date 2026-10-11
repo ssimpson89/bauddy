@@ -239,12 +239,20 @@ func (d *Device) run(ctx context.Context, cmd string) {
 		d.mu.Unlock()
 		d.send(ctx, "Destination filename [startup-config]? ")
 		return
+	case strings.HasPrefix(cmd, "clear counters"):
+		d.mu.Lock()
+		d.asking = cmd
+		d.mu.Unlock()
+		d.send(ctx, "Clear \"show interface\" counters on all interfaces [confirm]")
+		return
 	case cmd == "reload":
 		d.send(ctx, "Proceed with reload? [confirm]")
 		return // the next byte answers; a paste must not send one
 	case strings.HasPrefix(cmd, "bogus"):
 		ok = false
 		reply = "                 ^\r\n% Invalid input detected at '^' marker.\r\n\r\n"
+	case strings.HasPrefix(cmd, "show"):
+		reply = "output of " + cmd + "\r\n"
 	case strings.HasPrefix(cmd, "write"):
 		d.send(ctx, "Building configuration...\r\n")
 		reply = "[OK]\r\n"

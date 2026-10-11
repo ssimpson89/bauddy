@@ -506,14 +506,9 @@ func (m *Model) detected(msg detectDoneMsg) tea.Cmd {
 	return tea.Batch(m.output(msg.Heard), m.done("detected "+found, found+" (detected)"), m.save())
 }
 
-// lineSettings describes the rate and framing, e.g. "9600 baud" or
-// "9600 baud 7E1". Framing is only mentioned when it isn't 8N1.
+// lineSettings describes the rate and framing, e.g. "9600 baud 7E1".
 func (m *Model) lineSettings() string {
-	s := fmt.Sprintf("%d baud", m.sess.Baud())
-	if f := m.sess.Framing(); f != serialx.Framing8N1 {
-		s += " " + f.String()
-	}
-	return s
+	return serialx.LineSettings(m.sess.Baud(), m.sess.Framing())
 }
 
 // save remembers the current rate and framing for this adapter.

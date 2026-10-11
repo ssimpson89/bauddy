@@ -128,6 +128,42 @@ func TestRisky(t *testing.T) {
 	}
 }
 
+func TestDangerous(t *testing.T) {
+	for _, l := range []string{
+		"reload", "reload in 5", "rel", "relo\r", "  RELOAD", "do reload", "do rel",
+		"write erase", "wr er", "wri era", "erase startup-config", "era nvram:",
+		"del flash:vlan.dat", "delete /force flash:config.text", "format flash:",
+		"copy run start", "cop runn st", "copy tftp: startup-config", "conf rep flash:old",
+		"copy running-configuration startup-configuration", "clear configure all",
+		"boot system flash:old.bin", "request system reboot", "req sys reb", "run request system reboot",
+		"factory-reset", "execute factoryreset2", "exe reb", "configure factory-default",
+		"request restart system", "install add file bootflash:x.bin", "/system reboot", "system shutdown",
+		"sudo reboot", "sudo -i reboot", "/sbin/reboot", "bash sudo reboot", "shutdown now", "shutdown -h +5",
+		"systemctl reboot", "ls; reboot", "true && reboot", "echo `reboot`", "x $(reboot)",
+		"mkfs.ext4 /dev/sda1", "dd if=/dev/zero of=/dev/sda", "rm -rf /", "ipmitool chassis power cycle",
+		"!!", "!reb", "!-1", "sudo !!", "sudo -u root reboot", "env A=1 reboot", "bash -c 'reboot'", "su -c reboot",
+		"eval reboot", "xargs reboot", `\reboot`, "'reboot'", "busybox reboot", "systemctl --force reboot",
+		"MODE=recovery reboot", "A=1 B=2 sudo reboot",
+	} {
+		if !Dangerous(l) {
+			t.Errorf("%q not flagged", l)
+		}
+	}
+	for _, l := range []string{
+		"show version", "sh run", "sh reload", "re", "write memory", "wr", "copy run tftp:", "conf t",
+		"for i in 1 2 3; do echo $i; done", "description reload test", "interface Gi1/0/1",
+		"do show ip int brief", "no shutdown", "shutdown", "show reload", "reload cancel",
+		"show run | include reload", "show log | match reboot", "!", "! uplink to core", "ls /system/reboot",
+		"!Command: show running-config", "!Time: Sun Oct 11 14:00:00 2026", "!!! Authorized use only !!!",
+		"exec-timeout 5 0", "time-range work", "echo hello!", "sh -c reboot is show",
+		"sudo -u", "sudo -g", "env A=1", // wrappers with nothing after them
+	} {
+		if Dangerous(l) {
+			t.Errorf("%q flagged", l)
+		}
+	}
+}
+
 func TestLongLinesScrolled(t *testing.T) {
 	t.Parallel()
 	d := &simdev.Device{Baud: 9600, FIFO: 16, Width: 80}

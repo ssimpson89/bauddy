@@ -1,7 +1,11 @@
 // Package termtext reduces terminal output to the plain text a person saw.
 package termtext
 
-import "unicode/utf8"
+import (
+	"regexp"
+	"strings"
+	"unicode/utf8"
+)
 
 // Cleaner turns a raw terminal byte stream into plain lines: escape sequences
 // removed, backspaces and carriage-return overwrites applied. It keeps state
@@ -21,8 +25,13 @@ const (
 	sStrEsc
 )
 
+// lineMax bounds a line. Output at the wrong baud rate may never contain a
+// newline; past this, a line keeps its end.
+const lineMax = 16 << 10
+
 // Feed consumes b and returns the lines it completed, each ending in \n.
 func (c *Cleaner) Feed(b []byte) []byte {
+	defer c.bound()
 	var out []byte
 	for _, ch := range b {
 		switch c.state {
@@ -86,6 +95,19 @@ func (c *Cleaner) Feed(b []byte) []byte {
 	return out
 }
 
+// bound keeps the current line within lineMax, trimming it to half that
+// so trimming stays rare.
+func (c *Cleaner) bound() {
+	if len(c.line) <= lineMax {
+		return
+	}
+	cut := len(c.line) - lineMax/2
+	for cut < len(c.line) && !utf8.RuneStart(c.line[cut]) {
+		cut++
+	}
+	c.line = append(c.line[:0], c.line[cut:]...)
+}
+
 // Partial returns the unfinished current line, e.g. a prompt.
 func (c *Cleaner) Partial() string { return string(c.line) }
 
@@ -97,4 +119,14 @@ func (c *Cleaner) Flush() []byte {
 	out := append(append([]byte(nil), c.line...), '\n')
 	c.line, c.cr = c.line[:0], false
 	return out
+}
+
+// Pattern matches q literally, with smart case: all lowercase matches any
+// case ("error" finds "ERROR"); any capital matches exactly.
+func Pattern(q string) *regexp.Regexp {
+	expr := regexp.QuoteMeta(q)
+	if q == strings.ToLower(q) {
+		expr = "(?i)" + expr
+	}
+	return regexp.MustCompile(expr)
 }
