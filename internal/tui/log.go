@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,19 +11,22 @@ import (
 	"github.com/ssimpson89/bauddy/internal/logfile"
 )
 
-// historyMax is how much earlier output a new log starts with, so turning
+// unloggedMax is how much earlier output a new log starts with, so turning
 // logging on late still captures what already happened.
-const historyMax = 1 << 20
+const unloggedMax = 1 << 20
+
+// historyLinesMax is how many lines of earlier output history keeps.
+const historyLinesMax = 10000
 
 // output shows device bytes and records them: in the log if one is open,
 // otherwise in the history that the next log starts with.
 func (m *Model) output(b []byte) tea.Cmd {
 	_, _ = m.emu.Write(b)
-	m.screen.Feed(b)
+	m.rememberLines(m.screen.Feed(b))
 	if m.log == nil {
-		m.history = append(m.history, b...)
-		if over := len(m.history) - historyMax; over > 0 {
-			m.history = m.history[over:]
+		m.unlogged = append(m.unlogged, b...)
+		if over := len(m.unlogged) - unloggedMax; over > 0 {
+			m.unlogged = m.unlogged[over:]
 		}
 		return nil
 	}
@@ -41,21 +45,35 @@ func (m *Model) startLog() (string, error) {
 		return "", err
 	}
 	header := fmt.Sprintf("bauddy log: %s (%s) at %s, started %s",
-		m.opt.Name, m.sess.Path(), m.lineSettings(), now.Format("2006-01-02"))
+		m.opt.Name, m.sess.Path(), m.lineSettings(), now.Format("2006-01-02 15:04:05"))
 	l, err := logfile.Open(path, header)
 	if err != nil {
 		return "", err
 	}
-	if len(m.history) > 0 {
-		_ = l.Write(m.history)
+	if len(m.unlogged) > 0 {
+		_ = l.Write(m.unlogged)
 		_ = l.Mark("logging turned on; output above was captured before that")
-		m.history = nil
+		m.unlogged = nil
 	}
 	m.log = l
 	if len(m.logs) == 0 || m.logs[len(m.logs)-1] != path {
 		m.logs = append(m.logs, path)
 	}
 	return "logging to " + filepath.Base(path), nil
+}
+
+// rememberLines keeps completed lines of output, as plain text, for history.
+func (m *Model) rememberLines(b []byte) {
+	if len(b) == 0 {
+		return
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
+		m.hist.lines = append(m.hist.lines, line)
+		m.hist.linesTotal++
+	}
+	if over := len(m.hist.lines) - historyLinesMax; over > 0 {
+		m.hist.lines = m.hist.lines[over:]
+	}
 }
 
 func (m *Model) toggleLog() tea.Cmd {
@@ -73,6 +91,29 @@ func (m *Model) toggleLog() tea.Cmd {
 		return m.setError("can't save the log: " + err.Error())
 	}
 	return m.setNote("log saved: " + filepath.Base(path))
+}
+
+// done reports something that worked: a marker in the log and a note on the
+// status line. If the log can't be written, its error stays on the status
+// line instead, so logging never stops unnoticed.
+func (m *Model) done(note, mark string) tea.Cmd {
+	logging := m.log != nil
+	cmd := m.logMark(mark)
+	if logging && m.log == nil {
+		return cmd
+	}
+	return tea.Batch(cmd, m.setNote(note))
+}
+
+// failed reports something that went wrong, on the status line and in the
+// log, and says if logging stopped along the way.
+func (m *Model) failed(text string) tea.Cmd {
+	logging := m.log != nil
+	cmd := m.logMark(text)
+	if logging && m.log == nil {
+		text += "; logging stopped too"
+	}
+	return tea.Batch(cmd, m.setError(text))
 }
 
 // logMark writes a marker line to the log, if one is open.

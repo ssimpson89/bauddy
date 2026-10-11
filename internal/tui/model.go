@@ -28,6 +28,7 @@ const (
 	modeBaud                     // baud picker overlay
 	modePasteConfirm             // asking before a risky paste
 	modeProbeOffer               // detection heard nothing; offering to send Enter
+	modeHistory                  // scrolling back through earlier output
 )
 
 // Options configures the TUI.
@@ -80,11 +81,13 @@ type Model struct {
 	recheckUntil time.Time // until then, garbage means the saved rate is wrong
 	quiet        bool      // connected, but nothing has arrived yet
 
-	heard   bool             // any output has arrived
-	history []byte           // output since the last log, written at the start of the next one
-	screen  termtext.Cleaner // tracks the cursor line, e.g. the prompt
-	log     *logfile.Log     // nil when not logging
-	logs    []string         // every log file written this session
+	heard    bool             // any output has arrived
+	unlogged []byte           // output since the last log, written at the start of the next one
+	screen   termtext.Cleaner // tracks the cursor line, e.g. the prompt
+	log      *logfile.Log     // nil when not logging
+	logs     []string         // every log file written this session
+
+	hist history // earlier output, for scrolling back and searching
 
 	paste   *pasteJob     // nil when no paste is in progress
 	confirm *confirmPaste // a risky paste awaiting an answer
@@ -128,7 +131,7 @@ func New(opt Options) (*Model, error) {
 	if opt.Recheck {
 		m.recheckUntil = time.Now().Add(recheckWithin)
 	}
-	m.emu.SetScrollbackSize(10000)
+	m.emu.SetScrollbackSize(1) // history keeps earlier output; 0 would mean the default, 10,000 lines
 	if opt.LogPath != "" {
 		msg, err := m.startLog()
 		if err != nil {
@@ -212,6 +215,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.emu.Resize(m.width, max(1, m.height-1))
+		m.scrollTo(m.hist.top) // keep history's view in range
 		return m, nil
 
 	case eventMsg:
@@ -244,6 +248,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.detectDone(msg)
 
 	case tea.PasteMsg:
+		if m.mode == modeHistory && m.hist.editing {
+			m.typeSearch(msg.Content)
+			return m, nil
+		}
 		if m.mode != modeConsole || m.paste != nil {
 			return m, m.setNote("can't paste right now")
 		}
@@ -257,6 +265,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
 	}
 	return m, nil
 }
@@ -314,6 +323,8 @@ func (m *Model) handleKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.confirmKey(key)
 	case modeProbeOffer:
 		return m.probeKey(k, key)
+	case modeHistory:
+		return m.historyKey(k, key)
 	}
 	return m.commandKey(k, key)
 }
@@ -363,6 +374,10 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		m.sendKey(k)
 	case keymap.ActHelp:
 		m.mode = modeHelp
+	case keymap.ActHistory:
+		m.openHistory(false)
+	case keymap.ActSearch:
+		m.openHistory(true)
 	case keymap.ActBaud:
 		m.mode = modeBaud
 		m.baudCursor = max(0, slices.Index(baudChoices, m.sess.Baud()))
@@ -372,11 +387,13 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		if err := m.sess.Break(breakDuration); err != nil {
 			return m, m.setError("can't send BREAK: " + err.Error())
 		}
-		return m, m.setNote("break sent")
+		return m, m.done("break sent", "sent BREAK")
 	case keymap.ActSyncSize:
 		w, h := m.emu.Width(), m.emu.Height()
-		_, _ = fmt.Fprintf(m.sess, "stty rows %d cols %d\r", h, w)
-		return m, m.setNote(fmt.Sprintf("size %dx%d sent", w, h))
+		if _, err := fmt.Fprintf(m.sess, "stty rows %d cols %d\r", h, w); err != nil {
+			return m, m.setError("can't send the window size: " + err.Error())
+		}
+		return m, m.done(fmt.Sprintf("size %dx%d sent", w, h), fmt.Sprintf("sent window size %dx%d", w, h))
 	case keymap.ActClear:
 		_, _ = m.emu.Write([]byte("\x1b[2J\x1b[H")) // clear screen, cursor home
 	case keymap.ActLog:
@@ -420,7 +437,7 @@ func (m *Model) applyBaud(b int) (tea.Model, tea.Cmd) {
 		return m, m.setError(fmt.Sprintf("can't set %d baud: %v", b, err))
 	}
 	m.meter.Reset()
-	return m, tea.Batch(m.logMark(m.lineSettings()), m.setNote(m.lineSettings()), m.save())
+	return m, tea.Batch(m.done(m.lineSettings(), m.lineSettings()), m.save())
 }
 
 // startDetect runs baud detection in the background. Without probe it only
@@ -455,7 +472,7 @@ func (m *Model) detectDone(msg detectDoneMsg) tea.Cmd {
 	}
 	m.meter.Reset()
 	found := m.lineSettings()
-	return tea.Batch(m.logMark(found+" (detected)"), m.output(msg.Heard), m.setNote("detected "+found), m.save())
+	return tea.Batch(m.output(msg.Heard), m.done("detected "+found, found+" (detected)"), m.save())
 }
 
 // lineSettings describes the rate and framing, e.g. "9600 baud" or

@@ -59,6 +59,8 @@ shows what's next:
 | `d` | detect the baud rate |
 | `r` | reconnect to the port |
 | `l` | start or stop a log |
+| `h` | scroll back through earlier output (the last 10,000 lines) |
+| `/` | search earlier output |
 | `c` | clear the screen |
 | `B` | send BREAK (Cisco ROMMON, Linux SysRq) |
 | `S` | tell a remote shell the window size |
@@ -80,6 +82,8 @@ Lowercase keys act on bauddy. Capitals send something to the device.
   also set it yourself with `-f 7E1`.
 - **Logs** go in the current folder unless you say otherwise:
   `bauddy --log=~/console-logs` logs from the start into that folder.
+  A log records what the device sends, including the commands it echoes
+  back, so a password typed in a command (`enable secret …`) ends up in it.
 - **Windows** builds are included but haven't been tested yet.
 - **Arduino and ESP32 boards** may reset when bauddy connects. That's the
   board, not bauddy.

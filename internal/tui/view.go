@@ -105,6 +105,8 @@ func (m *Model) View() tea.View {
 		body = overlay(m.width, paneH, m.helpBox())
 	case modeBaud:
 		body = overlay(m.width, paneH, m.baudBox())
+	case modeHistory:
+		body = m.historyView(paneH)
 	default:
 		body = m.emu.Render()
 	}
@@ -136,6 +138,12 @@ func hint(key, label string) []seg {
 // amber renders a bar asking for a key: the lead text and hints on the left,
 // esc on the right. Hints are dropped from the end if the window is narrow.
 func amber(w int, lead string, hints [][]seg, esc string) string {
+	return fitLine(cAmber, w, amberLayouts(lead, hints, esc))
+}
+
+// amberLayouts is an amber bar with all its hints, then with one fewer at a
+// time, for fitLine to choose from.
+func amberLayouts(lead string, hints [][]seg, esc string) []layout {
 	left := []seg{{" " + lead, cOnAmber, true}}
 	if lead != "" {
 		left[0].text += "  "
@@ -145,7 +153,7 @@ func amber(w int, lead string, hints [][]seg, esc string) string {
 	for n := len(hints); n >= 0; n-- {
 		layouts = append(layouts, layout{slices.Concat(left, slices.Concat(hints[:n]...)), right})
 	}
-	return fitLine(cAmber, w, layouts)
+	return layouts
 }
 
 // statusLine renders the one-row bar. The key to the commands and the baud
@@ -163,6 +171,8 @@ func (m *Model) statusLine() string {
 		return amber(w, m.confirm.text(), [][]seg{hint("enter", "send"), hint("l", "log and send")}, "cancel")
 	case modeProbeOffer:
 		return amber(w, "nothing heard.", [][]seg{hint("enter", "send Enter at each baud rate")}, "skip")
+	case modeHistory:
+		return m.historyBar(w)
 	}
 	return m.mainLine(w)
 }
