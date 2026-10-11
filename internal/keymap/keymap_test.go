@@ -64,3 +64,12 @@ func TestGroupsSplitByWhatIsSent(t *testing.T) {
 		}
 	}
 }
+
+// A key that sends to the device can't run while detection has the port.
+func TestKeysThatSendUseThePort(t *testing.T) {
+	for _, b := range New(DefaultEscapeKey).Commands {
+		if b.Sends && !b.Action.UsesPort() {
+			t.Errorf("%s sends to the device but UsesPort is false", b.Key)
+		}
+	}
+}

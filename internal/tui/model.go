@@ -231,6 +231,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case noteClearMsg:
 		if msg.id == m.noteID && m.note.kind == noteInfo {
 			m.note = note{}
+			if m.detecting {
+				m.note = detectingNote // a note shown meanwhile has gone; detection hasn't
+			}
 		}
 		return m, nil
 
@@ -368,7 +371,9 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 	}
 	m.mode = modeConsole
 	if m.detecting && act.UsesPort() {
-		m.note = note{text: "detecting baud… (" + key + " must wait)", kind: noteSticky}
+		if m.note.kind != noteError { // don't hide an error that hasn't been seen
+			m.note = note{text: "detecting baud… " + key + " didn't run; try again when it's done", kind: noteSticky}
+		}
 		return m, nil
 	}
 	switch act {
@@ -454,7 +459,7 @@ func (m *Model) startDetect(probe bool) tea.Cmd {
 		return m.setNote("wait for the paste to finish")
 	}
 	m.detecting, m.quiet = true, false
-	m.note = note{text: "detecting baud…", kind: noteSticky}
+	m.note = detectingNote
 	sess, keep := m.sess, m.opt.KeepFraming
 	return func() tea.Msg {
 		r, err := sess.Detect(serialx.DetectConfig{Probe: probe, KeepFraming: keep})
@@ -462,15 +467,37 @@ func (m *Model) startDetect(probe bool) tea.Cmd {
 	}
 }
 
+// detectingNote stays on the status line while detection has the port.
+var detectingNote = note{text: "detecting baud… typing is ignored until it's done", kind: noteSticky}
+
+// detectDone shows what detection found. An error that arrived meanwhile,
+// such as the log failing, stays up until a key, as errors do.
 func (m *Model) detectDone(msg detectDoneMsg) tea.Cmd {
 	m.detecting = false
+	unseen := m.note
 	m.note = note{}
+	cmd := m.detected(msg)
+	switch {
+	case unseen.kind != noteError:
+	case m.note.kind == noteError:
+		m.note.text = unseen.text + "; " + m.note.text
+	default:
+		m.note = unseen
+	}
+	return cmd
+}
+
+func (m *Model) detected(msg detectDoneMsg) tea.Cmd {
 	switch {
 	case errors.Is(msg.err, serialx.ErrNoSignal) && !msg.probe && m.mode == modeConsole:
 		m.mode = modeProbeOffer
 		return nil
 	case errors.Is(msg.err, serialx.ErrNoSignal):
-		return tea.Batch(m.setNote("nothing heard at any rate"), m.checkQuietLater())
+		again := m.keys.Escape + " d"
+		if m.mode == modeCommand {
+			again = "d" // the command bar is open already
+		}
+		return tea.Batch(m.setNote("nothing heard at any rate; "+again+" tries again"), m.checkQuietLater())
 	case msg.err != nil:
 		return m.setError("can't detect the baud rate: " + msg.err.Error())
 	}
