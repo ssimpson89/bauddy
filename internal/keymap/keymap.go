@@ -28,6 +28,16 @@ const (
 	ActSearch
 )
 
+// UsesPort reports whether a changes or sends to the port, so it can't run
+// while baud detection has the port.
+func (a Action) UsesPort() bool {
+	switch a {
+	case ActBaud, ActDetect, ActBreak, ActSyncSize, ActReconnect, ActSendEscapeKey:
+		return true
+	}
+	return false
+}
+
 // Binding maps a key to an action, with text for people.
 type Binding struct {
 	Key    string // as reported by tea.KeyPressMsg.String()

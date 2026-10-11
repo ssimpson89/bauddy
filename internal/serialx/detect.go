@@ -91,8 +91,9 @@ func detect(p serial.Port, mode serial.Mode, cfg DetectConfig) (best Result, err
 
 		r, s := Result{rate, framingOf(mode), got}, score(got)
 		if f, ok := sevenBit(got); ok && !cfg.KeepFraming {
-			if text := strip7(got); score(text) > s {
-				r, s = Result{rate, f, text}, score(text)
+			text := strip7(got)
+			if ts := score(text); ts > s {
+				r, s = Result{rate, f, text}, ts
 			}
 		}
 		if s > bestScore {
