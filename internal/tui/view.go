@@ -105,6 +105,8 @@ func (m *Model) View() tea.View {
 		body = overlay(m.width, paneH, m.helpBox())
 	case modeBaud:
 		body = overlay(m.width, paneH, m.baudBox())
+	case modeSearch, modeSearchResults:
+		body = overlay(m.width, paneH, m.searchBox())
 	default:
 		body = m.emu.Render()
 	}
@@ -163,6 +165,10 @@ func (m *Model) statusLine() string {
 		return amber(w, m.confirm.text(), [][]seg{hint("enter", "send"), hint("l", "log and send")}, "cancel")
 	case modeProbeOffer:
 		return amber(w, "nothing heard.", [][]seg{hint("enter", "send Enter at each baud rate")}, "skip")
+	case modeSearch:
+		return amber(w, "search", [][]seg{hint("enter", "show")}, "cancel")
+	case modeSearchResults:
+		return amber(w, "search", [][]seg{hint("n", "older"), hint("N", "newer"), hint("/", "edit")}, "close")
 	}
 	return m.mainLine(w)
 }

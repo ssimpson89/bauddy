@@ -5,6 +5,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"time"
@@ -22,12 +23,14 @@ import (
 type mode int
 
 const (
-	modeConsole      mode = iota // every key goes to the device
-	modeCommand                  // next key is a bauddy command
-	modeHelp                     // help overlay
-	modeBaud                     // baud picker overlay
-	modePasteConfirm             // asking before a risky paste
-	modeProbeOffer               // detection heard nothing; offering to send Enter
+	modeConsole       mode = iota // every key goes to the device
+	modeCommand                   // next key is a bauddy command
+	modeHelp                      // help overlay
+	modeBaud                      // baud picker overlay
+	modePasteConfirm              // asking before a risky paste
+	modeProbeOffer                // detection heard nothing; offering to send Enter
+	modeSearch                    // editing a console search
+	modeSearchResults             // showing a console search result
 )
 
 // Options configures the TUI.
@@ -80,11 +83,18 @@ type Model struct {
 	recheckUntil time.Time // until then, garbage means the saved rate is wrong
 	quiet        bool      // connected, but nothing has arrived yet
 
-	heard   bool             // any output has arrived
-	history []byte           // output since the last log, written at the start of the next one
-	screen  termtext.Cleaner // tracks the cursor line, e.g. the prompt
-	log     *logfile.Log     // nil when not logging
-	logs    []string         // every log file written this session
+	heard    bool             // any output has arrived
+	history  []byte           // output since the last log, written at the start of the next one
+	screen   termtext.Cleaner // tracks the cursor line, e.g. the prompt
+	search   termtext.Cleaner // turns received output into searchable lines
+	lines    []string         // newest searchLinesMax completed console lines
+	query    string
+	pattern  *regexp.Regexp // the query as a pattern; nil when it's empty
+	searched []string       // the lines as they were when the query last changed
+	matches  []int          // indexes into searched, oldest first
+	match    int            // selected index in matches
+	log      *logfile.Log   // nil when not logging
+	logs     []string       // every log file written this session
 
 	paste   *pasteJob     // nil when no paste is in progress
 	confirm *confirmPaste // a risky paste awaiting an answer
@@ -314,6 +324,10 @@ func (m *Model) handleKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.confirmKey(key)
 	case modeProbeOffer:
 		return m.probeKey(k, key)
+	case modeSearch:
+		return m.searchKey(k, key)
+	case modeSearchResults:
+		return m.searchResultKey(key)
 	}
 	return m.commandKey(k, key)
 }
@@ -363,6 +377,8 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		m.sendKey(k)
 	case keymap.ActHelp:
 		m.mode = modeHelp
+	case keymap.ActSearch:
+		m.startSearch()
 	case keymap.ActBaud:
 		m.mode = modeBaud
 		m.baudCursor = max(0, slices.Index(baudChoices, m.sess.Baud()))
@@ -372,11 +388,11 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		if err := m.sess.Break(breakDuration); err != nil {
 			return m, m.setError("can't send BREAK: " + err.Error())
 		}
-		return m, m.setNote("break sent")
+		return m, tea.Batch(m.logMark("sent BREAK"), m.setNote("break sent"))
 	case keymap.ActSyncSize:
 		w, h := m.emu.Width(), m.emu.Height()
 		_, _ = fmt.Fprintf(m.sess, "stty rows %d cols %d\r", h, w)
-		return m, m.setNote(fmt.Sprintf("size %dx%d sent", w, h))
+		return m, tea.Batch(m.logMark(fmt.Sprintf("sent window size %dx%d", w, h)), m.setNote(fmt.Sprintf("size %dx%d sent", w, h)))
 	case keymap.ActClear:
 		_, _ = m.emu.Write([]byte("\x1b[2J\x1b[H")) // clear screen, cursor home
 	case keymap.ActLog:
