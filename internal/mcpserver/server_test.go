@@ -762,3 +762,27 @@ func TestJoiningAConsoleOpenInBauddy(t *testing.T) {
 		t.Errorf("after the user lets it type again:\n%s", out)
 	}
 }
+
+func TestReadOnlyOffersNoWayToType(t *testing.T) {
+	h := start(t, &simdev.Device{Baud: 9600, FIFO: 16}, Options{ReadOnly: true}, "")
+	tools, err := h.cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+	}
+	if got := strings.Join(names, " "); strings.Contains(got, "send_") || !strings.Contains(got, "read_output") {
+		t.Errorf("read-only tools: %s", got)
+	}
+	if in := h.cs.InitializeResult().Instructions; !strings.Contains(in, "read-only") || strings.Contains(in, "send_") {
+		t.Errorf("read-only instructions should say so, and name no tool that types:\n%s", in)
+	}
+	if out, isErr := h.call("connect", map[string]any{"detect": true, "probe": true}); !isErr || !strings.Contains(out, "read-only") {
+		t.Errorf("probing presses Enter, so read-only refuses it: %s", out)
+	}
+	if out := h.connect(); !strings.Contains(out, "Connected to") || strings.Contains(out, "send_") {
+		t.Errorf("read-only can still connect, and isn't told to type: %s", out)
+	}
+}

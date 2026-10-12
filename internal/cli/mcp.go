@@ -19,6 +19,7 @@ func newMCPCmd(version string) *cobra.Command {
 		logDir     string
 		noLog      bool
 		allowRisky bool
+		readOnly   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "mcp",
@@ -34,6 +35,8 @@ error or question. Reboots, erases, saving the configuration, debug, BREAK
 and the like need your approval, which bauddy asks for through the client.
 If the client can't ask, they're refused unless you start bauddy mcp with
 --allow-risky.
+
+With --read-only, the agent can connect and read the console but can't type.
 
 If the console is already open in bauddy, the agent joins it: you watch
 every command as it types it. esc stops it, which also pauses it, and
@@ -55,7 +58,7 @@ Saved baud rates and names are used but never changed.`,
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			err := mcpserver.Run(ctx, mcpserver.Options{Version: version, LogDir: dir, AllowRisky: allowRisky})
+			err := mcpserver.Run(ctx, mcpserver.Options{Version: version, LogDir: dir, AllowRisky: allowRisky, ReadOnly: readOnly})
 			if errors.Is(err, context.Canceled) {
 				return nil // the client stopped the server
 			}
@@ -65,6 +68,7 @@ Saved baud rates and names are used but never changed.`,
 	cmd.Flags().StringVar(&logDir, "log", "", "directory for the logs (default "+defaultLogDirHelp()+")")
 	cmd.Flags().BoolVar(&noLog, "no-log", false, "don't log")
 	cmd.Flags().BoolVar(&allowRisky, "allow-risky", false, "when the MCP client can't ask for your approval, send what needs it anyway")
+	cmd.Flags().BoolVar(&readOnly, "read-only", false, "let the agent connect and read the console, but not type anything")
 	cmd.MarkFlagsMutuallyExclusive("log", "no-log")
 	return cmd
 }
