@@ -4,9 +4,13 @@ bauddy is a serial console for servers, switches and routers. Plug in a USB
 console cable, run `bauddy`, and you're on the console. It works out the
 port and baud rate for you, and the keys you need are always on screen.
 
-It's also an MCP server: an AI agent such as Claude can connect to the
-console, run commands and read the output, and bauddy asks you before it
-sends anything that could reboot or wipe the device.
+It's also an MCP server, so an AI agent such as Claude can use the console
+while you watch. It asks you first before commands that commonly reboot,
+erase or save the device.
+
+Free and open source (MIT). Early beta for macOS, Linux and Windows: not yet
+tested on real hardware or on Windows, so expect rough edges and please
+[report them](https://github.com/ssimpson89/bauddy/issues).
 
 ![bauddy connected to a switch](docs/screenshot.png)
 
@@ -26,7 +30,7 @@ sends anything that could reboot or wipe the device.
   was already on screen, so you can turn it on after the fact.
 - **Pastes carefully.** Pasting a config sends it a line at a time and waits
   for the device to catch up. It stops at the first error and asks before
-  pasting anything that could reboot or wipe the device.
+  pasting commands that commonly reboot or wipe the device.
 - **Lets an AI agent help (MCP).** `bauddy mcp` gives Claude, or any other
   Model Context Protocol client, the console: "the switch on my console
   cable isn't passing traffic, take a look". See
@@ -36,9 +40,21 @@ sends anything that could reboot or wipe the device.
 
 Download the file for your system from the
 [releases page](https://github.com/ssimpson89/bauddy/releases), unzip it,
-and put `bauddy` somewhere on your path.
+and put `bauddy` somewhere on your path:
 
-Or, if you have Go:
+- Mac with Apple silicon: `darwin_arm64`; Intel Mac: `darwin_amd64`
+- Most Linux PCs: `linux_amd64`; Raspberry Pi: `linux_arm64` or `linux_armv7`
+- Windows: `windows_amd64` (a zip with `bauddy.exe`)
+
+**macOS** blocks the downloaded file the first time, because it isn't signed
+by Apple. Allow it in System Settings → Privacy & Security, or run
+`xattr -d com.apple.quarantine bauddy`.
+
+Check it works with `bauddy --version`. To check the download, run
+`shasum -a 256 -c checksums.txt --ignore-missing` (`sha256sum` on Linux)
+with `checksums.txt` from the same release.
+
+Or, with Go 1.26 or later (on a Mac, also Xcode's command line tools):
 
 ```
 go install github.com/ssimpson89/bauddy/cmd/bauddy@latest
@@ -77,82 +93,10 @@ shows what's next:
 
 Lowercase keys act on bauddy. Capitals send something to the device.
 
-## Use it with an AI agent (MCP server)
-
-`bauddy mcp` is a Model Context Protocol (MCP) server for serial consoles. It
-lets an AI agent such as Claude use the console: find the port, detect the
-baud rate, run commands and read the output. It's new, so treat it as
-experimental. Add it to Claude Code with:
-
-```
-claude mcp add --scope user bauddy -- bauddy mcp
-```
-
-Then ask something like "my switch on the console cable isn't passing
-traffic, take a look". The agent can connect, run commands and read the
-output. Commands go through the same careful paste, so they arrive intact
-and stop at the first error or question.
-
-**Watch it work.** If you already have the console open in bauddy, the agent
-joins your window instead of taking the port, and you see every command as
-it types it:
-
-- While it's working, the bottom line turns violet:
-  `Claude Code is working   esc stop it  ctrl+c stop and interrupt`
-  (on narrow windows, just `esc stop`). Your other keys, except `ctrl+]`, are
-  ignored until it's done, so they can't land in the middle of its command.
-- **esc** stops it. A command it hadn't entered yet is erased.
-  **ctrl+c** stops it and interrupts the device.
-- Stopping it also pauses it: it can still read, but can't type until you
-  press `ctrl+]` then `p`. Between its commands, the same keys pause it before
-  the next one.
-- It sees what the console prints from when it joined, not before, so log in
-  first if you'd rather it didn't see that.
-- Claude Code may ask you before each command, depending on its settings.
-  Don't rely on that: esc always stops it here.
-- Watching an agent work, like sharing a console between windows, isn't
-  available on Windows yet.
-
-**Approvals.** Some things need your approval, and bauddy asks you directly,
-not the agent:
-
-  - rebooting
-  - erasing
-  - saving or committing the configuration
-  - upgrades
-  - `debug`
-  - clearing BGP sessions or console lines
-  - BREAK
-  - answering the device's own `[confirm]` questions
-  - anything typed at a bootloader prompt
-
-  If your MCP client can't ask you, bauddy refuses, unless you start it with
-  `bauddy mcp --allow-risky`.
-- That check is a safety net, not a guarantee. It doesn't ask about
-  configuration changes such as shutting an interface or changing a route,
-  which can cut you off too, and aliases or scripts can get past it. Read
-  what the agent wants to run before you allow it.
-- Everything the device prints goes to the agent and into the log,
-  including any passwords in the configuration. Logs go in
-  `~/.local/state/bauddy/logs` (`%LocalAppData%\bauddy\logs` on Windows),
-  readable only by you. Use `--log DIR` to choose another folder, or
-  `--no-log` to turn logging off.
-- If bauddy isn't open, the agent opens the port itself. Open bauddy later
-  and it joins.
-- For Claude Desktop, add this to `claude_desktop_config.json`, with the full
-  path to `bauddy`:
-
-  ```json
-  { "mcpServers": { "bauddy": { "command": "/usr/local/bin/bauddy", "args": ["mcp"] } } }
-  ```
-
 ## Good to know
 
-- **macOS** may block the downloaded file the first time, because it isn't
-  signed by Apple. Allow it in System Settings → Privacy & Security, or run
-  `xattr -d com.apple.quarantine bauddy`.
 - **Linux** may say you don't have permission to open the port. bauddy tells
-  you which group to join (usually `dialout`).
+  you which group to join (usually `dialout`); then log out and back in.
 - **If `ctrl+]` is awkward on your keyboard**, use another key:
   `bauddy --escape ctrl+t`, or set `BAUDDY_ESCAPE=ctrl+t` in your shell.
 - **Older equipment** that uses 7-bit framing (7E1) is detected too. You can
@@ -164,10 +108,91 @@ not the agent:
 - **Open bauddy twice** on the same port and both windows share the console:
   everything the device prints shows in both, and either can type. (Not on
   Windows yet.)
-- **Windows** builds are included but haven't been tested yet.
 - **Arduino and ESP32 boards** may reset when bauddy connects. That's the
   board, not bauddy.
 
+---
+
+## Use it with an AI agent (MCP server)
+
+`bauddy mcp` is a Model Context Protocol (MCP) server for serial consoles. It
+lets an AI agent such as Claude use the console: find the port, detect the
+baud rate, run commands and read the output. Then ask something like "my
+switch on the console cable isn't passing traffic, take a look". Commands go
+through the same careful paste, so they arrive intact and stop at the first
+error or question.
+
+### Add it
+
+```
+claude mcp add bauddy -- bauddy mcp                   # this project only, just you (the default: --scope local)
+claude mcp add --scope user bauddy -- bauddy mcp      # every project, just you
+claude mcp add --scope project bauddy -- bauddy mcp   # this project, shared with everyone in .mcp.json
+claude --mcp-config '{"mcpServers":{"bauddy":{"command":"bauddy","args":["mcp"]}}}'   # this session only
+claude mcp remove bauddy                              # remove it, from whichever scope it is in
+```
+
+Add `--read-only` after `bauddy mcp` and the agent can connect and read the
+console, but has no way to type anything.
+
+For Claude Desktop, add this to `claude_desktop_config.json`, with the full
+path to `bauddy`:
+
+```json
+{ "mcpServers": { "bauddy": { "command": "/usr/local/bin/bauddy", "args": ["mcp"] } } }
+```
+
+### Watch it work
+
+If you already have the console open in bauddy, the agent joins your window
+instead of taking the port, and you see every command as it types it. If
+bauddy isn't open, the agent opens the port itself; open bauddy later and it
+joins.
+
+- While it's working, the bottom line turns violet:
+  `Claude Code is working   esc stop it  ctrl+c stop and interrupt`.
+  Your other keys, except `ctrl+]`, are ignored until it's done, so they
+  can't land in the middle of its command.
+- **esc** stops it before its next keystroke, and erases a command it hadn't
+  entered. Anything it already sent to the device has been sent.
+  **ctrl+c** stops it and interrupts the device.
+- Stopping it also pauses it: it can still read, but can't type until you
+  press `ctrl+]` then `p`. Between its commands, the same keys pause it.
+- Claude Code may also ask you before each command, depending on its
+  settings. Don't rely on that.
+- Not on Windows yet.
+
+### Approvals
+
+bauddy asks you, not the agent, before it sends:
+
+- a reboot, erase or upgrade
+- a command that saves or commits the configuration
+- `debug`, or clearing BGP sessions or console lines
+- BREAK
+- an answer to the device's own `[confirm]` question
+- anything at a bootloader prompt
+
+If your MCP client can't ask you, bauddy refuses, unless you started it with
+`bauddy mcp --allow-risky`.
+
+This is a safety net, not a guarantee. It doesn't ask about configuration
+changes such as shutting an interface or changing a route, which can cut you
+off too, and aliases or scripts can get past it. Read what the agent wants
+to run before you allow it.
+
+### What the agent sees
+
+- What the console prints from when it joined, not before, so log in first
+  if you'd rather it didn't see that.
+- Everything after that, including any passwords in the configuration.
+- Logs go in `~/.local/state/bauddy/logs` (`%LocalAppData%\bauddy\logs` on
+  Windows), readable only by you. Use `--log DIR` to choose another folder,
+  or `--no-log` to turn logging off.
+
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE). Changes are listed on the
+[releases page](https://github.com/ssimpson89/bauddy/releases); to build or
+contribute, see [CONTRIBUTING.md](CONTRIBUTING.md). Found a security problem?
+See [SECURITY.md](SECURITY.md).
