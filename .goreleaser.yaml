@@ -61,7 +61,7 @@ homebrew_casks:
     repository:
       owner: ssimpson89
       name: homebrew-tap
-      token: '{{ index .Env "HOMEBREW_TAP_TOKEN" }}'
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
     homepage: https://github.com/ssimpson89/bauddy
     description: Serial console for servers, switches and routers
