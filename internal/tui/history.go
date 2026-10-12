@@ -168,10 +168,18 @@ func (m *Model) selectMatch(i int) {
 	m.scrollTo(h.matches[h.match] - m.pageHeight()/2)
 }
 
-var (
-	matchStyle    = lipgloss.NewStyle().Foreground(cAmber).Bold(true)
-	selectedStyle = lipgloss.NewStyle().Background(cAmber).Foreground(cOnAmber).Bold(true)
-)
+// selectedStyle is the selected match: dark on blue, readable on any theme.
+var selectedStyle = lipgloss.NewStyle().Background(cAccent).Foreground(cOnAccent).Bold(true)
+
+// matchStyle is the other matches, drawn on the terminal's own background:
+// the light blue is too pale on a light theme, so that gets the dark one.
+func (m *Model) matchStyle() lipgloss.Style {
+	fg := cAccent
+	if m.light {
+		fg = cAccentOnLight
+	}
+	return lipgloss.NewStyle().Foreground(fg).Bold(true)
+}
 
 // historyView draws the screenful of history starting at top.
 func (m *Model) historyView(height int) string {
@@ -203,7 +211,7 @@ func (m *Model) historyLine(line string, selected bool) string {
 			prefix, line = "…"+ansi.Cut(before, w-keep+1, w), line[loc[0]:]
 		}
 	}
-	style := matchStyle
+	style := m.matchStyle()
 	if selected {
 		style = selectedStyle
 	}
@@ -229,9 +237,9 @@ func (m *Model) historyBar(w int) string {
 		}
 		var layouts []layout
 		for _, lead := range leads {
-			layouts = append(layouts, amberLayouts(lead, [][]seg{hint("enter", "find")}, "cancel")...)
+			layouts = append(layouts, askLayouts(lead, [][]seg{hint("enter", "find")}, "cancel")...)
 		}
-		return fitLine(cAmber, w, layouts)
+		return fitLine(cAccent, w, layouts)
 	}
 	where := "no output yet"
 	if len(h.shown) > 0 {
@@ -255,9 +263,9 @@ func (m *Model) historyBar(w int) string {
 	hints = append(hints, hint("↑↓", "scroll"))
 	var layouts []layout
 	for _, lead := range []string{"history  " + where + found + fresh, "history  " + where + found, "history  " + where, "history"} {
-		layouts = append(layouts, amberLayouts(lead, hints, "back")...)
+		layouts = append(layouts, askLayouts(lead, hints, "back")...)
 	}
-	return fitLine(cAmber, w, layouts)
+	return fitLine(cAccent, w, layouts)
 }
 
 func plural(n int, one, many string) string {
