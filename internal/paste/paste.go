@@ -203,7 +203,7 @@ var (
 	// promptChanger matches commands after which the prompt starts differently.
 	promptChanger = regexp.MustCompile(`^\s*(hostname|su|sudo|exit|logout|ssh|telnet)\b`)
 	// login matches username and password prompts, which count as ready.
-	login    = regexp.MustCompile(`(?i)(username|login|password|passphrase)\s*:\s*$`)
+	login    = regexp.MustCompile(`(?i)(username|login|password|passphrase|passcode)(\s+(as|for)\b[^\n:]{0,40})?\s*:\s*$`) // "[sudo] password for x:", "login as:"
 	password = regexp.MustCompile(`(?i)(password|passphrase)\s*:\s*$`)
 	// textInput matches devices announcing free-text input (IOS and EOS
 	// banners, Junos load terminal), where no prompt appears between lines.

@@ -14,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/ssimpson89/bauddy/internal/serialx"
+	"github.com/ssimpson89/bauddy/internal/share"
 	"github.com/ssimpson89/bauddy/internal/simdev"
 )
 
@@ -65,6 +66,9 @@ func (p *simPort) Detect(serialx.DetectConfig) (serialx.Result, error) {
 	return serialx.Result{Baud: p.d.Baud, Framing: serialx.Framing8N1}, nil
 }
 
+func (p *simPort) SetBaud(int) error { return nil }
+func (p *simPort) Reconnect()        {}
+
 // say makes the device print s.
 func (p *simPort) say(s string) { p.events <- serialx.Event{Data: []byte(s)} }
 
@@ -100,7 +104,7 @@ func startVersion(t *testing.T, d *simdev.Device, opt Options, answer, version s
 	s.list = func() ([]serialx.PortInfo, error) {
 		return []serialx.PortInfo{{Path: "/dev/ttySIM0", Key: "usb:1:2:3", USB: true, VID: "0403", PID: "6001"}}, nil
 	}
-	s.open = func(path string, baud int, f serialx.Framing) (Port, error) {
+	s.open = func(key, path string, baud int, f serialx.Framing, who string) (Port, error) {
 		if err := h.openErr; err != nil {
 			return nil, err
 		}
@@ -699,5 +703,62 @@ func TestRisk(t *testing.T) {
 		if got := (line{cursor: c.cursor, prompt: c.prompt}).typed(); got != c.want {
 			t.Errorf("typed after %q on %q = %q, want %q", c.prompt, c.cursor, got, c.want)
 		}
+	}
+}
+
+// The user has the console open in bauddy; Claude joins it.
+func TestJoiningAConsoleOpenInBauddy(t *testing.T) {
+	d, err := os.MkdirTemp("", "bd") // short: socket paths are limited
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(d) })
+	t.Setenv("XDG_RUNTIME_DIR", d)
+
+	h := start(t, &simdev.Device{Baud: 9600, FIFO: 16, Slow: map[string]time.Duration{"show tech": 3 * time.Second}}, Options{}, "")
+	opener := func(string, int, serialx.Framing) (share.Port, error) { return h.port, nil }
+	window, err := share.Open(share.Options{Key: "k", Path: "/dev/ttySIM0", Baud: 9600, Replay: true, Open: opener})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { window.Close() })
+	h.port.say("Username: admin\r\nPassword:\r\nSwitch#")
+	time.Sleep(50 * time.Millisecond)
+	h.server.open = func(key, path string, baud int, f serialx.Framing, who string) (Port, error) {
+		return share.Open(share.Options{Key: "k", Path: path, Agent: true, Name: who, Open: opener})
+	}
+
+	out := h.connect()
+	if !strings.Contains(out, "Joined ttySIM0") || strings.Contains(out, "admin") || !strings.HasSuffix(out, "Switch#") {
+		t.Errorf("joining should show only the current line:\n%s", out)
+	}
+	if got := window.Status().Agent; got != "test" {
+		t.Errorf("the window should show the AI tool by its client's name, got %q", got)
+	}
+
+	if out, isErr := h.call("send_command", map[string]any{"command": "show clock"}); isErr || !strings.Contains(out, "output of show clock") {
+		t.Fatalf("send_command through the shared console:\n%s", out)
+	}
+
+	done := make(chan string)
+	go func() { out, _ := h.call("send_command", map[string]any{"command": "show tech"}); done <- out }()
+	for !window.Status().Working {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := window.StopAgent(false); err != nil {
+		t.Fatal(err)
+	}
+	if out := <-done; !strings.Contains(out, "The user stopped you in bauddy") {
+		t.Errorf("stopped mid-command:\n%s", out)
+	}
+	if out, isErr := h.call("send_command", map[string]any{"command": "show clock"}); !isErr || !strings.Contains(out, "Paused by the user") {
+		t.Errorf("while paused:\n%s", out)
+	}
+	if err := window.TogglePause(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * time.Second) // let "show tech" finish, as the user would
+	if out, isErr := h.call("send_command", map[string]any{"command": "show clock"}); isErr {
+		t.Errorf("after the user lets it type again:\n%s", out)
 	}
 }
