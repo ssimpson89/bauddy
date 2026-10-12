@@ -44,7 +44,13 @@ type (
 // without Enter is typed straight away; anything else is paced, after asking
 // if it's risky.
 func (m *Model) receivePaste(text string) tea.Cmd {
-	if m.detecting {
+	if m.watching {
+		return m.setNote(watchingNote)
+	}
+	if m.agentWorking() {
+		return m.setNote(m.agent() + " is working · paste again when it's done")
+	}
+	if m.detectingAnywhere() {
 		return m.setNote("detecting the baud rate; paste again when it's done")
 	}
 	lines := paste.Lines(text)

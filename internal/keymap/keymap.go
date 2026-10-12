@@ -26,6 +26,7 @@ const (
 	ActQuit
 	ActHistory
 	ActSearch
+	ActPause
 )
 
 // UsesPort reports whether a changes or sends to the port, so it can't run
@@ -77,6 +78,7 @@ func New(esc string) Keymap {
 			{Key: "h", Action: ActHistory, Short: "history", Help: "Scroll back through earlier output (last 10,000 lines)", Keep: 5},
 			{Key: "/", Action: ActSearch, Help: "Search earlier output"},
 			{Key: "c", Action: ActClear, Short: "clear", Help: "Clear the screen", Keep: 2},
+			{Key: "p", Action: ActPause, Short: "pause", Help: "With an AI tool on this console: pause or resume it", Keep: 9},
 			{Key: "q", Action: ActQuit, Short: "quit", Help: "Quit", Keep: KeepAlways},
 			{Key: "esc", Action: ActLeaveCommand, Short: "back", Help: "Back to the console", Keep: KeepAlways},
 			{Key: "B", Action: ActBreak, Short: "break", Help: "Send BREAK (ROMMON, SysRq; can change a Linux login prompt's baud)", Sends: true, Keep: 4},

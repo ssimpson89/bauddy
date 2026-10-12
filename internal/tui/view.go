@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -25,7 +26,11 @@ var (
 	cDim     = lipgloss.Color("#9A9A9A")
 	cGreen   = lipgloss.Color("#5FB760")
 	cRedBar  = lipgloss.Color("#5A1F1B")
-	cOnRed   = lipgloss.Color("#FFD9D4")
+	// Violet is an AI tool: the bar while it has the keyboard, and its name.
+	cViolet     = lipgloss.Color("#5B4FA8")
+	cOnViolet   = lipgloss.Color("#EEEBFF")
+	cVioletText = lipgloss.Color("#B3A8F0")
+	cOnRed      = lipgloss.Color("#FFD9D4")
 
 	// Overlays draw on the terminal's own background, so they need darker
 	// text on light themes: cAmber and cDim have poor contrast on white. The
@@ -174,7 +179,46 @@ func (m *Model) statusLine() string {
 	case modeHistory:
 		return m.historyBar(w)
 	}
+	if m.agentWorking() {
+		return m.agentLine(w)
+	}
 	return m.mainLine(w)
+}
+
+// agentLine is the bar while an AI tool has the keyboard: violet, so it
+// never looks like bauddy asking you for a key.
+func (m *Model) agentLine(w int) string {
+	lead := []seg{{" " + m.agent() + " is working", cOnViolet, true}}
+	if time.Now().Before(m.ignoredUntil) {
+		lead = append(lead, seg{" · keys ignored", cOnViolet, false})
+	}
+	keys := []seg{{"esc", cOnViolet, true}, {" stop it  ", cOnViolet, false}, {"ctrl+c", cOnViolet, true}, {" stop and interrupt ", cOnViolet, false}}
+	short := []seg{{"esc", cOnViolet, true}, {" stop ", cOnViolet, false}}
+	working := []seg{{" working", cOnViolet, true}}
+	return fitLine(cViolet, w, []layout{{lead, keys}, {lead[:1], keys}, {lead, short}, {lead[:1], short}, {working, short}})
+}
+
+// peers says who else is on a shared console, e.g. "+Claude Code paused".
+func (m *Model) peers() []seg {
+	if m.shared == nil {
+		return nil
+	}
+	s := m.shared.Status()
+	var out []seg
+	if s.Windows > 1 {
+		out = append(out, seg{fmt.Sprintf("  +%d window", s.Windows-1), cVioletText, false})
+		if s.Windows > 2 {
+			out[0].text += "s"
+		}
+	}
+	if s.Agent != "" {
+		text := "  +" + s.Agent
+		if s.Paused {
+			text += " paused"
+		}
+		out = append(out, seg{text, cVioletText, false})
+	}
+	return out
 }
 
 // mainLine is the bar in console mode: name, rate, state and any message,
@@ -218,6 +262,9 @@ func (m *Model) mainLine(w int) string {
 	case m.note.text != "":
 		note = []seg{{"  " + m.note.text, accent, m.note.kind == noteError}}
 		noteShort = note
+	case m.shared != nil && m.shared.Status().Detecting && !m.detecting:
+		note = []seg{{"  detecting baud…", accent, false}}
+		noteShort = note
 	case m.meter.Garbled() && m.state == serialx.Connected:
 		note = []seg{{"  garbled? ", accent, false}, {m.keys.Escape + " d", accent, true}, {" detect", accent, false}}
 		noteShort = []seg{{"  ", nil, false}, {m.keys.Escape + " d", accent, true}}
@@ -228,10 +275,12 @@ func (m *Model) mainLine(w int) string {
 	keys := []seg{{m.keys.Escape, accent, true}, {" keys ", fg, false}}
 	short := []seg{{shortKey(m.keys.Escape), accent, true}, {" keys ", fg, false}}
 
+	peers := m.peers()
 	return fitLine(bg, w, []layout{ // widest first; each step drops or shortens something
-		{slices.Concat(sp, name, []seg{baud, state}, logging, note), keys},
-		{slices.Concat(sp, name, []seg{baud, state}, logging, note), short},
-		{slices.Concat(sp, []seg{baud, state}, logging, note), short},
+		{slices.Concat(sp, name, []seg{baud, state}, peers, logging, note), keys},
+		{slices.Concat(sp, name, []seg{baud, state}, peers, logging, note), short},
+		{slices.Concat(sp, []seg{baud, state}, peers, logging, note), short},
+		{slices.Concat(sp, []seg{baud, stateShort}, peers, logging, noteShort), short},
 		{slices.Concat(sp, []seg{baud, stateShort}, logging, noteShort), short},
 		{slices.Concat(sp, []seg{baud, stateShort}), short},
 	})
@@ -272,6 +321,15 @@ func (m *Model) commandLine(w int) string {
 		case keymap.ActLog:
 			if m.log != nil {
 				k.label = "stop log"
+			}
+		case keymap.ActPause: // only while an AI tool is on the console
+			agent := m.agent()
+			if agent == "" {
+				continue
+			}
+			k.label = "pause " + agent
+			if m.shared.Status().Paused {
+				k.label = "resume " + agent
 			}
 		case keymap.ActReconnect: // unplugged: reconnect is what you need now
 			if m.state != serialx.Connected {
@@ -381,6 +439,11 @@ func (m *Model) helpBox() string {
 	var sb strings.Builder
 	sb.WriteString(keyStyle.Render("bauddy keys") + dimStyle.Render("  "+m.opt.Version) + "\n\n")
 	sb.WriteString(dimStyle.Render(m.keys.Intro()) + "\n")
+	if agent := m.agent(); agent != "" { // first, so a short window doesn't crop it
+		sb.WriteString("\n" + agent + dimStyle.Render(" sees what the console prints from when it joined") + "\n")
+		sb.WriteString("  " + keyStyle.Render(fmt.Sprintf("%-8s", "esc")) + " stop it while it's working (its unsent command is cleared)\n")
+		sb.WriteString("  " + keyStyle.Render(fmt.Sprintf("%-8s", "ctrl+c")) + " stop it and interrupt the device\n")
+	}
 	for _, g := range m.keys.Groups() {
 		sb.WriteString("\n" + g.Title + "\n")
 		for _, b := range g.Bindings {

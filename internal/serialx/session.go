@@ -25,6 +25,9 @@ const (
 type Event struct {
 	Data  []byte
 	State State
+	// Replay marks output from before this client joined a shared console:
+	// for the screen and history, not new output.
+	Replay bool
 }
 
 var (
@@ -48,8 +51,7 @@ type Session struct {
 	ioMu      sync.Mutex
 	detecting atomic.Bool // Write refuses while set: keystrokes would go out at a trial rate
 
-	tapMu sync.Mutex
-	taps  map[chan []byte]struct{}
+	taps Taps
 
 	events    chan Event
 	done      chan struct{}
@@ -69,7 +71,6 @@ const (
 func Open(path string, baud int, f Framing) (*Session, error) {
 	s := &Session{
 		path:   path,
-		taps:   map[chan []byte]struct{}{},
 		mode:   serial.Mode{BaudRate: baud},
 		events: make(chan Event, 256),
 		done:   make(chan struct{}),
@@ -161,7 +162,7 @@ func (s *Session) readLoop() {
 		s.ioMu.Unlock()
 		if n > 0 {
 			data := append([]byte(nil), buf[:n]...)
-			s.tap(data)
+			s.taps.Send(data)
 			s.emit(Event{Data: data})
 		}
 		if err != nil && !s.isClosed() {
@@ -192,28 +193,7 @@ func (s *Session) Write(b []byte) (int, error) {
 // Tap returns a channel that receives a copy of everything the device sends
 // from now on, until cancel is called. A slow reader misses data rather than
 // stalling the session.
-func (s *Session) Tap() (<-chan []byte, func()) {
-	ch := make(chan []byte, 1024)
-	s.tapMu.Lock()
-	s.taps[ch] = struct{}{}
-	s.tapMu.Unlock()
-	return ch, func() {
-		s.tapMu.Lock()
-		delete(s.taps, ch)
-		s.tapMu.Unlock()
-	}
-}
-
-func (s *Session) tap(b []byte) {
-	s.tapMu.Lock()
-	defer s.tapMu.Unlock()
-	for ch := range s.taps {
-		select {
-		case ch <- b:
-		default:
-		}
-	}
-}
+func (s *Session) Tap() (<-chan []byte, func()) { return s.taps.Tap() }
 
 // Baud returns the current rate.
 func (s *Session) Baud() int {

@@ -93,8 +93,29 @@ traffic, take a look". The agent can connect, run commands and read the
 output. Commands go through the same careful paste, so they arrive intact
 and stop at the first error or question.
 
-- Some things need your approval, and bauddy asks you directly, not the
-  agent:
+**Watch it work.** If you already have the console open in bauddy, the agent
+joins your window instead of taking the port, and you see every command as
+it types it:
+
+- While it's working, the bottom line turns violet:
+  `Claude Code is working   esc stop it  ctrl+c stop and interrupt`
+  (on narrow windows, just `esc stop`). Your other keys, except `ctrl+]`, are
+  ignored until it's done, so they can't land in the middle of its command.
+- **esc** stops it. A command it hadn't entered yet is erased.
+  **ctrl+c** stops it and interrupts the device.
+- Stopping it also pauses it: it can still read, but can't type until you
+  press `ctrl+]` then `p`. Between its commands, the same keys pause it before
+  the next one.
+- It sees what the console prints from when it joined, not before, so log in
+  first if you'd rather it didn't see that.
+- Claude Code may ask you before each command, depending on its settings.
+  Don't rely on that: esc always stops it here.
+- Watching an agent work, like sharing a console between windows, isn't
+  available on Windows yet.
+
+**Approvals.** Some things need your approval, and bauddy asks you directly,
+not the agent:
+
   - rebooting
   - erasing
   - saving or committing the configuration
@@ -116,8 +137,8 @@ and stop at the first error or question.
   `~/.local/state/bauddy/logs` (`%LocalAppData%\bauddy\logs` on Windows),
   readable only by you. Use `--log DIR` to choose another folder, or
   `--no-log` to turn logging off.
-- The port can only be open in one program at a time. Close bauddy before
-  the agent connects, and ask the agent to disconnect when you want it back.
+- If bauddy isn't open, the agent opens the port itself. Open bauddy later
+  and it joins.
 - For Claude Desktop, add this to `claude_desktop_config.json`, with the full
   path to `bauddy`:
 
@@ -140,6 +161,9 @@ and stop at the first error or question.
   `bauddy --log=~/console-logs` logs from the start into that folder.
   A log records what the device sends, including the commands it echoes
   back, so a password typed in a command (`enable secret …`) ends up in it.
+- **Open bauddy twice** on the same port and both windows share the console:
+  everything the device prints shows in both, and either can type. (Not on
+  Windows yet.)
 - **Windows** builds are included but haven't been tested yet.
 - **Arduino and ESP32 boards** may reset when bauddy connects. That's the
   board, not bauddy.

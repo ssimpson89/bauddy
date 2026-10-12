@@ -264,3 +264,18 @@ func TestPatterns(t *testing.T) {
 		t.Error("progress output taken for a prompt once the host is known")
 	}
 }
+
+func TestAtLogin(t *testing.T) {
+	for line, want := range map[string]bool{
+		"Password: ":                  true,
+		"[sudo] password for alice: ": true,
+		"login as: ":                  true,
+		"Enter passphrase for key 'id_ed25519': ": true,
+		"Unauthorized login prohibited. Contact:": false,
+		"Switch#": false,
+	} {
+		if got := AtLogin(line); got != want {
+			t.Errorf("AtLogin(%q) = %v, want %v", line, got, want)
+		}
+	}
+}

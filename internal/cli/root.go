@@ -19,6 +19,7 @@ import (
 	"github.com/ssimpson89/bauddy/internal/keymap"
 	"github.com/ssimpson89/bauddy/internal/profile"
 	"github.com/ssimpson89/bauddy/internal/serialx"
+	"github.com/ssimpson89/bauddy/internal/share"
 	"github.com/ssimpson89/bauddy/internal/tui"
 )
 
@@ -119,11 +120,22 @@ func run(arg string, o *rootOpts, version string) error {
 		framing = f
 	}
 
-	sess, err := serialx.Open(port.OpenPath(), baud, framing)
+	// A bauddy started from Claude Code's shell is the AI tool looking, so
+	// it joins as one: no earlier output, and it can't type or unpause.
+	byAgent := os.Getenv("CLAUDECODE") != ""
+	sess, err := share.Open(share.Options{Key: port.Key, Path: port.OpenPath(), Baud: baud, Framing: framing,
+		Replay: !byAgent, Agent: byAgent, Name: map[bool]string{true: "Claude Code"}[byAgent]})
 	if err != nil {
 		return serialx.OpenError(port.OpenPath(), err)
 	}
 	defer sess.Close()
+	var ignoredBaud string // said after the TUI, where it can be read
+	if sess.Joined() {
+		source = "joined" // another bauddy has the console: use its rate, don't detect
+		if o.baud > 0 && o.baud != sess.Baud() {
+			ignoredBaud = fmt.Sprintf("--baud %d was ignored: the console was already open at %d baud in another bauddy", o.baud, sess.Baud())
+		}
+	}
 	save := func(baud int, f serialx.Framing) error { return store.RememberLine(port.Key, baud, f.String()) }
 	// Save what the user chose explicitly; detected rates are saved by the
 	// TUI once they've worked.
@@ -152,6 +164,15 @@ func run(arg string, o *rootOpts, version string) error {
 	_, err = tea.NewProgram(m).Run()
 	for _, path := range m.Finish() {
 		fmt.Fprintln(os.Stderr, "log saved:", path)
+	}
+	if ignoredBaud != "" {
+		fmt.Fprintln(os.Stderr, ignoredBaud)
+	}
+	if err := sess.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+	if s := sess.Status(); s.Agent != "" && s.Windows <= 1 {
+		fmt.Fprintln(os.Stderr, s.Agent, "still has this console open. Run bauddy again to rejoin.")
 	}
 	return err
 }

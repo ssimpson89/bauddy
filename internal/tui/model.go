@@ -5,6 +5,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"time"
@@ -31,9 +32,24 @@ const (
 	modeHistory                  // scrolling back through earlier output
 )
 
+// Port is the serial connection the console drives: a *serialx.Session, or
+// a console shared with other bauddy windows.
+type Port interface {
+	io.Writer
+	Path() string
+	Events() <-chan serialx.Event
+	Tap() (<-chan []byte, func())
+	Baud() int
+	Framing() serialx.Framing
+	SetBaud(baud int) error
+	Break(d time.Duration) error
+	Reconnect()
+	Detect(cfg serialx.DetectConfig) (serialx.Result, error)
+}
+
 // Options configures the TUI.
 type Options struct {
-	Session     *serialx.Session
+	Session     Port
 	Name        string // short label for the status line, e.g. "core-sw-01" or "ttyUSB0"
 	Keymap      keymap.Keymap
 	LogPath     string // log from the start to this file or directory ("." for the current one)
@@ -63,12 +79,18 @@ const (
 
 // Model is the Bubble Tea model.
 type Model struct {
-	opt   Options
-	sess  *serialx.Session
-	emu   *vt.SafeEmulator
-	keys  keymap.Keymap
-	mode  mode
-	state serialx.State
+	opt    Options
+	sess   Port
+	shared Shared // nil unless the console can be shared
+	// watching means this window is on the console as the AI tool (bauddy
+	// started from its shell), so what's typed here isn't sent.
+	watching bool
+
+	ignoredUntil time.Time // the AI tool's bar says your keys were ignored until then
+	emu          *vt.SafeEmulator
+	keys         keymap.Keymap
+	mode         mode
+	state        serialx.State
 
 	width, height int
 
@@ -128,6 +150,14 @@ func New(opt Options) (*Model, error) {
 		keys:  opt.Keymap,
 		state: serialx.Connected,
 	}
+	m.shared, _ = opt.Session.(Shared)
+	if j, ok := opt.Session.(interface{ Joined() bool }); ok && j.Joined() {
+		m.note = note{text: "joined the open console"}
+	}
+	if w, ok := opt.Session.(interface{ Watching() bool }); ok && w.Watching() {
+		m.watching, m.shared = true, nil // the AI tool on the status line would be this window
+		m.note = note{text: watchingNote, kind: noteSticky}
+	}
 	if opt.Recheck {
 		m.recheckUntil = time.Now().Add(recheckWithin)
 	}
@@ -163,6 +193,7 @@ func New(opt Options) (*Model, error) {
 func (m *Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		m.waitEvent(),
+		m.waitShare(),
 		m.checkQuietLater(),
 		tea.RequestBackgroundColor, // to pick overlay colours for light or dark themes
 	}
@@ -228,6 +259,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionDone:
 		return m, tea.Quit
 
+	case shareMsg:
+		return m, tea.Batch(m.waitShare(), m.shareNote(msg.note))
+
+	case shareErrMsg:
+		return m, m.setError(msg.err.Error())
+
 	case noteClearMsg:
 		if msg.id == m.noteID && m.note.kind == noteInfo {
 			m.note = note{}
@@ -274,6 +311,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) event(e serialx.Event) tea.Cmd {
+	if e.Replay { // output from before this window joined: for the screen and history only
+		_, _ = m.emu.Write(e.Data)
+		m.rememberLines(m.screen.Feed(e.Data))
+		m.heard = true
+		return nil
+	}
 	var cmds []tea.Cmd
 	if len(e.Data) > 0 {
 		cmds = append(cmds, m.output(e.Data))
@@ -307,6 +350,15 @@ func (m *Model) sendKey(k tea.KeyPressMsg) {
 
 func (m *Model) handleKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := k.String()
+	switch {
+	case m.mode != modeConsole || m.shared == nil:
+	case m.agentWorking():
+		if handled, cmd := m.agentKey(key); handled {
+			return m, cmd
+		}
+	default:
+		m.shared.KeyPressed() // so an AI tool waits for you
+	}
 	if m.note.kind != noteInfo && m.note.text != "" && !m.detecting { // keep "detecting baud…" up
 		m.note = note{}
 		if key == "esc" {
@@ -333,8 +385,10 @@ func (m *Model) handleKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) consoleKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 	switch {
-	case m.detecting && key != m.keys.Escape:
+	case m.detectingAnywhere() && key != m.keys.Escape:
 		return m, nil // the port is busy detecting; the status line says so
+	case m.watching && key != m.keys.Escape:
+		return m, m.setNote(watchingNote)
 	case m.paste != nil && (key == "esc" || key == m.keys.Escape):
 		return m, m.stopPaste()
 	case m.paste != nil:
@@ -370,7 +424,7 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		return m, m.setNote(fmt.Sprintf("%s isn't a command; ? shows the keys", key))
 	}
 	m.mode = modeConsole
-	if m.detecting && act.UsesPort() {
+	if m.detectingAnywhere() && act.UsesPort() {
 		if m.note.kind != noteError { // don't hide an error that hasn't been seen
 			m.note = note{text: "detecting baud… " + key + " didn't run; try again when it's done", kind: noteSticky}
 		}
@@ -409,6 +463,8 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 	case keymap.ActReconnect:
 		m.sess.Reconnect()
 		return m, m.setNote("reconnecting…")
+	case keymap.ActPause:
+		return m, m.togglePause()
 	case keymap.ActQuit:
 		return m, tea.Quit
 	}
@@ -469,6 +525,8 @@ func (m *Model) startDetect(probe bool) tea.Cmd {
 
 // detectingNote stays on the status line while detection has the port.
 var detectingNote = note{text: "detecting baud… typing is ignored until it's done", kind: noteSticky}
+
+const watchingNote = "watching only: started from an AI tool's shell, so keys aren't sent"
 
 // detectDone shows what detection found. An error that arrived meanwhile,
 // such as the log failing, stays up until a key, as errors do.

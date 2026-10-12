@@ -35,6 +35,10 @@ and the like need your approval, which bauddy asks for through the client.
 If the client can't ask, they're refused unless you start bauddy mcp with
 --allow-risky.
 
+If the console is already open in bauddy, the agent joins it: you watch
+every command as it types it. esc stops it, which also pauses it, and
+ctrl+] p pauses or resumes it.
+
 Everything is logged, by default to ` + defaultLogDirHelp() + `.
 Saved baud rates and names are used but never changed.`,
 		Args: cobra.NoArgs,
