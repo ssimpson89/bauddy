@@ -52,6 +52,29 @@ changelog:
   filters:
     exclude: ["^docs:", "^test:", "^chore:", "^ci:"]
 
+# Homebrew: brew install ssimpson89/tap/bauddy. Each release, betas included,
+# updates the cask in github.com/ssimpson89/homebrew-tap. It needs the
+# HOMEBREW_TAP_TOKEN secret (a token that can write to that repo); without it
+# this step is skipped. See RELEASING.md.
+homebrew_casks:
+  - name: bauddy
+    repository:
+      owner: ssimpson89
+      name: homebrew-tap
+      token: '{{ index .Env "HOMEBREW_TAP_TOKEN" }}'
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
+    homepage: https://github.com/ssimpson89/bauddy
+    description: Serial console for servers, switches and routers
+    commit_msg_template: "bauddy {{ .Tag }}"
+    # The binary isn't signed, so take it out of quarantine, or macOS blocks
+    # it the first time it runs.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/bauddy"]
+          end
+
 # Signing and notarizing macOS binaries needs a paid Apple Developer account.
 # It stays off until the MACOS_* secrets exist; see RELEASING.md.
 notarize:
