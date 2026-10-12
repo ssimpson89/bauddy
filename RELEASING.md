@@ -19,6 +19,15 @@ the binary, so `bauddy --version` and the `?` overlay show it.
 It runs on a macOS runner because the macOS build needs cgo (the serial
 library lists ports through IOKit); Linux and Windows cross-compile from there.
 
+Each release also updates the Homebrew cask in
+[ssimpson89/homebrew-tap](https://github.com/ssimpson89/homebrew-tap), so
+`brew install ssimpson89/tap/bauddy` gets it, betas included. That needs a
+repository secret, `HOMEBREW_TAP_TOKEN`: a fine-grained personal access token
+with **Contents: read and write** on `homebrew-tap` only. Without it the
+Homebrew step is skipped and the rest of the release goes ahead. The cask
+takes the unsigned macOS binary out of quarantine after installing, so
+Gatekeeper doesn't block it.
+
 To try a release locally without publishing:
 
 ```

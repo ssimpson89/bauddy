@@ -25,6 +25,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional: updates the Homebrew tap (ssimpson89/homebrew-tap).
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           # Optional: macOS signing and notarization (paid Apple Developer account).
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
           MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}

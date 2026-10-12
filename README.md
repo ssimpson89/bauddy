@@ -38,7 +38,13 @@ tested on real hardware or on Windows, so expect rough edges and please
 
 ## Install
 
-Download the file for your system from the
+With [Homebrew](https://brew.sh) on a Mac or Linux:
+
+```
+brew install ssimpson89/tap/bauddy
+```
+
+Or download the file for your system from the
 [releases page](https://github.com/ssimpson89/bauddy/releases), unzip it,
 and put `bauddy` somewhere on your path:
 
@@ -46,9 +52,9 @@ and put `bauddy` somewhere on your path:
 - Most Linux PCs: `linux_amd64`; Raspberry Pi: `linux_arm64` or `linux_armv7`
 - Windows: `windows_amd64` (a zip with `bauddy.exe`)
 
-**macOS** blocks the downloaded file the first time, because it isn't signed
-by Apple. Allow it in System Settings → Privacy & Security, or run
-`xattr -d com.apple.quarantine bauddy`.
+**macOS** blocks a downloaded file the first time, because it isn't signed
+by Apple (Homebrew takes care of this for you). Allow it in System Settings
+→ Privacy & Security, or run `xattr -d com.apple.quarantine bauddy`.
 
 Check it works with `bauddy --version`. To check the download, run
 `shasum -a 256 -c checksums.txt --ignore-missing` (`sha256sum` on Linux)
