@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ssimpson89/bauddy/internal/keymap"
@@ -237,5 +238,20 @@ func TestHistoryBarFitsAndKeepsEsc(t *testing.T) {
 	empty.openHistory(false)
 	if b := hbar(empty, 80); !strings.Contains(b, "no output yet") {
 		t.Errorf("empty history should say so: %q", b)
+	}
+}
+
+// On a light theme, matches are the dark blue: the light one is too pale.
+func TestHistoryMatchesAreReadableOnLightThemes(t *testing.T) {
+	for light, want := range map[bool]string{false: lipgloss.NewStyle().Foreground(cAccent).Bold(true).Render("down"), true: lipgloss.NewStyle().Foreground(cAccentOnLight).Bold(true).Render("down")} {
+		m := historyModel(0, 80, 24)
+		m.light = light
+		m.hist.lines = []string{"link down"}
+		m.openHistory(false)
+		m.hist.query = "down"
+		m.findMatches()
+		if got := m.historyLine("link down", false); !strings.Contains(got, want) {
+			t.Errorf("light %v: %q", light, got)
+		}
 	}
 }

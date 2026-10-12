@@ -72,8 +72,8 @@ type note struct {
 type noteKind int
 
 const (
-	noteInfo   noteKind = iota // amber, clears itself
-	noteSticky                 // amber, stays until a key
+	noteInfo   noteKind = iota // accent colour, clears itself
+	noteSticky                 // accent colour, stays until a key
 	noteError                  // red, stays until a key
 )
 

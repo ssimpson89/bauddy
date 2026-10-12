@@ -16,37 +16,38 @@ import (
 	"github.com/ssimpson89/bauddy/internal/serialx"
 )
 
-// Palette. Amber is bauddy's one accent; red only means "something's wrong".
+// Palette. Console-cable blue (the light blue of a Cisco console cable) is
+// bauddy's one accent; red only means "something's wrong".
 var (
-	cAmber   = lipgloss.Color("#E8A33D")
-	cOnAmber = lipgloss.Color("#2A1A00")
-	cBar     = lipgloss.Color("#262626")
-	cText    = lipgloss.Color("#D0D0D0")
-	cBright  = lipgloss.Color("#ECECEC")
-	cDim     = lipgloss.Color("#9A9A9A")
-	cGreen   = lipgloss.Color("#5FB760")
-	cRedBar  = lipgloss.Color("#5A1F1B")
+	cAccent   = lipgloss.Color("#9CC4E6")
+	cOnAccent = lipgloss.Color("#0F2A40")
+	cBar      = lipgloss.Color("#262626")
+	cText     = lipgloss.Color("#D0D0D0")
+	cBright   = lipgloss.Color("#ECECEC")
+	cDim      = lipgloss.Color("#9A9A9A")
+	cGreen    = lipgloss.Color("#5FB760")
+	cRedBar   = lipgloss.Color("#5A1F1B")
+	cOnRed    = lipgloss.Color("#FFD9D4")
 	// Violet is an AI tool: the bar while it has the keyboard, and its name.
 	cViolet     = lipgloss.Color("#5B4FA8")
 	cOnViolet   = lipgloss.Color("#EEEBFF")
 	cVioletText = lipgloss.Color("#B3A8F0")
-	cOnRed      = lipgloss.Color("#FFD9D4")
 
 	// Overlays draw on the terminal's own background, so they need darker
-	// text on light themes: cAmber and cDim have poor contrast on white. The
+	// text on light themes: cAccent and cDim have poor contrast on white. The
 	// status bar sets its own background and works on any theme.
-	cAmberOnLight = lipgloss.Color("#8A5200")
+	cAccentOnLight = lipgloss.Color("#1F5C8F")
 
-	cDivider    = lipgloss.Color("#8A5200") // the command bar's divider, on amber
+	cDivider    = lipgloss.Color("#3E6E96") // the command bar's divider, on the blue bar
 	cDimOnLight = lipgloss.Color("#5C5C5C")
 )
 
 // overlayStyles returns the box, key and dim styles for the help and baud
 // overlays, suited to the terminal's background.
 func (m *Model) overlayStyles() (box, key, dim lipgloss.Style) {
-	accent, faint := color.Color(cAmber), color.Color(cDim)
+	accent, faint := color.Color(cAccent), color.Color(cDim)
 	if m.light {
-		accent, faint = cAmberOnLight, cDimOnLight
+		accent, faint = cAccentOnLight, cDimOnLight
 	}
 	box = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 2)
 	return box, lipgloss.NewStyle().Foreground(accent).Bold(true), lipgloss.NewStyle().Foreground(faint)
@@ -135,25 +136,25 @@ func overlay(w, h int, box string) string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, strings.Join(lines, "\n"))
 }
 
-// hint is a key and what it does, for the amber bars: "enter send".
+// hint is a key and what it does, for the blue bars: "enter send".
 func hint(key, label string) []seg {
-	return []seg{{key, cOnAmber, true}, {" " + label + "  ", cOnAmber, false}}
+	return []seg{{key, cOnAccent, true}, {" " + label + "  ", cOnAccent, false}}
 }
 
-// amber renders a bar asking for a key: the lead text and hints on the left,
+// askBar renders a bar asking for a key: the lead text and hints on the left,
 // esc on the right. Hints are dropped from the end if the window is narrow.
-func amber(w int, lead string, hints [][]seg, esc string) string {
-	return fitLine(cAmber, w, amberLayouts(lead, hints, esc))
+func askBar(w int, lead string, hints [][]seg, esc string) string {
+	return fitLine(cAccent, w, askLayouts(lead, hints, esc))
 }
 
-// amberLayouts is an amber bar with all its hints, then with one fewer at a
+// askLayouts is a blue bar with all its hints, then with one fewer at a
 // time, for fitLine to choose from.
-func amberLayouts(lead string, hints [][]seg, esc string) []layout {
-	left := []seg{{" " + lead, cOnAmber, true}}
+func askLayouts(lead string, hints [][]seg, esc string) []layout {
+	left := []seg{{" " + lead, cOnAccent, true}}
 	if lead != "" {
 		left[0].text += "  "
 	}
-	right := []seg{{"esc", cOnAmber, true}, {" " + esc + " ", cOnAmber, false}}
+	right := []seg{{"esc", cOnAccent, true}, {" " + esc + " ", cOnAccent, false}}
 	var layouts []layout
 	for n := len(hints); n >= 0; n-- {
 		layouts = append(layouts, layout{slices.Concat(left, slices.Concat(hints[:n]...)), right})
@@ -169,13 +170,13 @@ func (m *Model) statusLine() string {
 	case modeCommand:
 		return m.commandLine(w)
 	case modeBaud:
-		return amber(w, "", [][]seg{hint("↑↓", "choose"), hint("enter", "set"), hint("d", "detect")}, "cancel")
+		return askBar(w, "", [][]seg{hint("↑↓", "choose"), hint("enter", "set"), hint("d", "detect")}, "cancel")
 	case modeHelp:
-		return line(cAmber, w, []seg{{" any key closes", cOnAmber, false}}, nil)
+		return line(cAccent, w, []seg{{" any key closes", cOnAccent, false}}, nil)
 	case modePasteConfirm:
-		return amber(w, m.confirm.text(), [][]seg{hint("enter", "send"), hint("l", "log and send")}, "cancel")
+		return askBar(w, m.confirm.text(), [][]seg{hint("enter", "send"), hint("l", "log and send")}, "cancel")
 	case modeProbeOffer:
-		return amber(w, "nothing heard.", [][]seg{hint("enter", "send Enter at each baud rate")}, "skip")
+		return askBar(w, "nothing heard.", [][]seg{hint("enter", "send Enter at each baud rate")}, "skip")
 	case modeHistory:
 		return m.historyBar(w)
 	}
@@ -226,7 +227,7 @@ func (m *Model) peers() []seg {
 // is wrong.
 func (m *Model) mainLine(w int) string {
 	bad := m.state != serialx.Connected || m.note.kind == noteError
-	bg, fg, accent := cBar, cText, cAmber
+	bg, fg, accent := cBar, cText, cAccent
 	if bad {
 		bg, fg, accent = cRedBar, cOnRed, cOnRed
 	}
@@ -302,7 +303,7 @@ type barKey struct {
 	help       bool // the ? key, which reads "more" once anything is hidden
 }
 
-// commandLine is the amber bar in command mode.
+// commandLine is the blue bar in command mode.
 func (m *Model) commandLine(w int) string {
 	var keys []barKey
 	var quit, back barKey
@@ -369,7 +370,7 @@ func commandBar(w int, keys []barKey, quit, back barKey, note string) string {
 		over := width(left) + 1 + width(right) - w // +1: at least one cell between them
 		switch {
 		case over <= 0:
-			return line(cAmber, w, left, right)
+			return line(cAccent, w, left, right)
 		case len(drop) > 0:
 			shown[drop[0]], drop = false, drop[1:]
 		case note != "" && lipgloss.Width(note) > noteMin:
@@ -383,7 +384,7 @@ func commandBar(w int, keys []barKey, quit, back barKey, note string) string {
 		case helpLabel:
 			helpLabel = false
 		default:
-			return line(cAmber, w, left, right) // cut at the edge
+			return line(cAccent, w, left, right) // cut at the edge
 		}
 	}
 }
@@ -392,7 +393,7 @@ func commandBar(w int, keys []barKey, quit, back barKey, note string) string {
 // sends to the device. Without helpLabel, the ? key is shown bare.
 func barLeft(keys []barKey, shown []bool, helpLabel bool) []seg {
 	hidden := slices.Contains(shown, false)
-	out := []seg{{" ", cOnAmber, false}}
+	out := []seg{{" ", cOnAccent, false}}
 	divided := false
 	for i, k := range keys {
 		if !shown[i] {
@@ -405,7 +406,7 @@ func barLeft(keys []barKey, shown []bool, helpLabel bool) []seg {
 		label := k.label
 		switch {
 		case k.help && !helpLabel:
-			out = append(out, seg{k.key + "  ", cOnAmber, true})
+			out = append(out, seg{k.key + "  ", cOnAccent, true})
 			continue
 		case k.help && hidden:
 			label = "more"
@@ -419,17 +420,17 @@ func barLeft(keys []barKey, shown []bool, helpLabel bool) []seg {
 func barRight(note string, quit, back barKey, quitFull, backFull bool) []seg {
 	var out []seg
 	if note != "" {
-		out = append(out, seg{note + "   ", cOnAmber, true})
+		out = append(out, seg{note + "   ", cOnAccent, true})
 	}
 	if quitFull {
 		out = append(out, hint(quit.key, quit.label)...)
 	} else {
-		out = append(out, seg{quit.key + "  ", cOnAmber, true})
+		out = append(out, seg{quit.key + "  ", cOnAccent, true})
 	}
 	if backFull {
-		out = append(out, seg{back.key, cOnAmber, true}, seg{" " + back.label + " ", cOnAmber, false})
+		out = append(out, seg{back.key, cOnAccent, true}, seg{" " + back.label + " ", cOnAccent, false})
 	} else {
-		out = append(out, seg{back.key + " ", cOnAmber, true})
+		out = append(out, seg{back.key + " ", cOnAccent, true})
 	}
 	return out
 }
