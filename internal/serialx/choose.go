@@ -65,11 +65,22 @@ func Choose(arg string, ports []PortInfo, named func(string) (string, bool)) (Po
 // OpenError explains the common reasons a port won't open, with what to do
 // about them.
 func OpenError(path string, err error) error {
-	var pe *serial.PortError
+	var pe interface { // *serial.PortError
+		error
+		Code() serial.PortErrorCode
+	}
 	if errors.As(err, &pe) {
 		switch pe.Code() {
 		case serial.PortBusy:
 			return fmt.Errorf("%s is in use by another program (screen, minicom, another bauddy); close it and try again", path)
+		case serial.InvalidSpeed, serial.InvalidDataBits, serial.InvalidParity, serial.InvalidStopBits:
+			return fmt.Errorf("%s won't open: the adapter doesn't support that baud rate or framing", path)
+		case serial.InvalidSerialPort:
+			// The port opened but the driver refused the settings. The
+			// library doesn't wrap the cause, so this is the only way to tell.
+			if strings.Contains(pe.Error(), "error configuring port") {
+				return fmt.Errorf("%s won't open: the adapter doesn't support that baud rate or framing", path)
+			}
 		case serial.PermissionDenied:
 			return fmt.Errorf("no permission to open %s; on Linux, add yourself to the group that owns it "+
 				"(usually dialout, uucp on Arch): sudo usermod -aG dialout $USER, then log out and back in", path)

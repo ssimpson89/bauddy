@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 
 	"github.com/ssimpson89/bauddy/internal/keymap"
@@ -92,5 +93,37 @@ func TestNothingHeardSaysWhatToDo(t *testing.T) {
 	m.detectDone(detectDoneMsg{err: errors.New("port gone")})
 	if !strings.Contains(m.note.text, "can't write the log; can't detect the baud rate: port gone") {
 		t.Errorf("both errors should show: %q", m.note.text)
+	}
+}
+
+type reconnectPort struct {
+	Port
+	reconnects int
+}
+
+func (p *reconnectPort) Baud() int                { return 9600 }
+func (p *reconnectPort) Framing() serialx.Framing { return serialx.Framing8N1 }
+func (p *reconnectPort) Reconnect()               { p.reconnects++ }
+
+func TestReconnectIsNotUnplugged(t *testing.T) {
+	p := &reconnectPort{}
+	m := &Model{keys: keymap.New(keymap.DefaultEscapeKey), sess: p, emu: vt.NewSafeEmulator(80, 24)}
+	line := func() string { return ansi.Strip(m.mainLine(120)) }
+
+	_, _ = m.commandKey(tea.KeyPressMsg{Text: "r"}, "r")
+	m.event(serialx.Event{State: serialx.Disconnected})  // the port closing
+	_, _ = m.commandKey(tea.KeyPressMsg{Text: "r"}, "r") // pressed again before it's back
+	if s := line(); !strings.Contains(s, "reconnecting…") || strings.Contains(s, "unplugged") {
+		t.Errorf("after r: %q, want reconnecting and not unplugged", s)
+	}
+	m.event(serialx.Event{State: serialx.Connected})
+	if m.reconnecting || m.note.text != "reconnected" {
+		t.Errorf("back: reconnecting %v, note %q", m.reconnecting, m.note.text)
+	}
+
+	m.event(serialx.Event{State: serialx.Disconnected}) // the cable comes out
+	_, _ = m.commandKey(tea.KeyPressMsg{Text: "r"}, "r")
+	if s := line(); !strings.Contains(s, "unplugged") || p.reconnects != 3 {
+		t.Errorf("r while unplugged: %q (reconnects %d), want it still to say unplugged", s, p.reconnects)
 	}
 }
