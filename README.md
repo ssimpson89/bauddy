@@ -44,6 +44,10 @@ With [Homebrew](https://brew.sh) on a Mac or Linux:
 brew install ssimpson89/tap/bauddy
 ```
 
+`brew upgrade` keeps it up to date. For betas too, install
+`ssimpson89/tap/bauddy@beta` instead (`brew uninstall bauddy` first; only
+one can be installed). Until the first stable release, both get the betas.
+
 Or download the file for your system from the
 [releases page](https://github.com/ssimpson89/bauddy/releases), unzip it,
 and put `bauddy` somewhere on your path:

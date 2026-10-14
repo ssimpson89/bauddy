@@ -52,17 +52,22 @@ changelog:
   filters:
     exclude: ["^docs:", "^test:", "^chore:", "^ci:"]
 
-# Homebrew: brew install ssimpson89/tap/bauddy. Each release, betas included,
-# updates the cask in github.com/ssimpson89/homebrew-tap. It needs the
-# HOMEBREW_TAP_TOKEN secret (a token that can write to that repo); without it
-# this step is skipped. See RELEASING.md.
+# Homebrew: two casks in github.com/ssimpson89/homebrew-tap. bauddy@beta gets
+# every release; bauddy gets stable releases, and betas too until the first
+# stable one (the workflow sets HAS_STABLE once a stable tag exists). Both need
+# the HOMEBREW_TAP_TOKEN secret (a token that can write to that repo); without
+# it this step is skipped. See RELEASING.md.
 homebrew_casks:
-  - name: bauddy
+  - &cask
+    name: bauddy
+    binaries: [bauddy]
+    conflicts:
+      - cask: bauddy@beta
+    skip_upload: '{{ if not (index .Env "HOMEBREW_TAP_TOKEN") }}true{{ else if and .Prerelease (index .Env "HAS_STABLE") }}true{{ else }}false{{ end }}'
     repository:
       owner: ssimpson89
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
     homepage: https://github.com/ssimpson89/bauddy
     description: Serial console for servers, switches and routers
     commit_msg_template: "bauddy {{ .Tag }}"
@@ -74,6 +79,12 @@ homebrew_casks:
           if OS.mac?
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/bauddy"]
           end
+  - <<: *cask
+    name: bauddy@beta
+    description: Serial console for servers, switches and routers (betas included)
+    conflicts:
+      - cask: bauddy
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
 
 # Signing and notarizing macOS binaries needs a paid Apple Developer account.
 # It stays off until the MACOS_* secrets exist; see RELEASING.md.
