@@ -16,8 +16,9 @@ tested on real hardware or on Windows, so expect rough edges and please
 
 ## What it does
 
-- **Finds the port.** With one USB adapter it connects straight away. With
-  several, it asks which one. With none plugged in yet, it waits for one.
+- **Finds the port.** With one cable it connects straight away. With none
+  plugged in yet, it waits for one. With several, it lists them; not sure
+  which is yours? Unplug it and plug it back in, and bauddy points to it.
 - **Finds the baud rate.** It listens to the device and picks the rate that
   makes sense, then remembers it for that cable. It won't send anything to
   the device without asking first.
