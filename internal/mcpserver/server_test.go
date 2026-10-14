@@ -104,7 +104,7 @@ func startVersion(t *testing.T, d *simdev.Device, opt Options, answer, version s
 	s.list = func() ([]serialx.PortInfo, error) {
 		return []serialx.PortInfo{{Path: "/dev/ttySIM0", Key: "usb:1:2:3", USB: true, VID: "0403", PID: "6001"}}, nil
 	}
-	s.open = func(key, path string, baud int, f serialx.Framing, who string) (Port, error) {
+	s.open = func(adapter, path string, baud int, f serialx.Framing, who string) (Port, error) {
 		if err := h.openErr; err != nil {
 			return nil, err
 		}
@@ -717,15 +717,15 @@ func TestJoiningAConsoleOpenInBauddy(t *testing.T) {
 
 	h := start(t, &simdev.Device{Baud: 9600, FIFO: 16, Slow: map[string]time.Duration{"show tech": 3 * time.Second}}, Options{}, "")
 	opener := func(string, int, serialx.Framing) (share.Port, error) { return h.port, nil }
-	window, err := share.Open(share.Options{Key: "k", Path: "/dev/ttySIM0", Baud: 9600, Replay: true, Open: opener})
+	window, err := share.Open(share.Options{Adapter: "k", Path: "/dev/ttySIM0", Baud: 9600, Replay: true, Open: opener})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { window.Close() })
 	h.port.say("Username: admin\r\nPassword:\r\nSwitch#")
 	time.Sleep(50 * time.Millisecond)
-	h.server.open = func(key, path string, baud int, f serialx.Framing, who string) (Port, error) {
-		return share.Open(share.Options{Key: "k", Path: path, Agent: true, Name: who, Open: opener})
+	h.server.open = func(adapter, path string, baud int, f serialx.Framing, who string) (Port, error) {
+		return share.Open(share.Options{Adapter: "k", Path: path, Agent: true, Name: who, Open: opener})
 	}
 
 	out := h.connect()

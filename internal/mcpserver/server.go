@@ -103,7 +103,7 @@ type server struct {
 	list func() ([]serialx.PortInfo, error)
 	// open opens a console as the AI tool named who, joining it if it's
 	// open in bauddy.
-	open func(key, path string, baud int, f serialx.Framing, who string) (Port, error)
+	open func(adapter, path string, baud int, f serialx.Framing, who string) (Port, error)
 
 	// mu lets one tool at a time use the console, including while it waits
 	// for the device. Calls from one agent come one at a time anyway.
@@ -131,8 +131,8 @@ func newServer(opt Options) *server {
 		asked:     map[string]string{},
 		answersAt: -1,
 		list:      serialx.List,
-		open: func(key, path string, baud int, f serialx.Framing, who string) (Port, error) {
-			return share.Open(share.Options{Key: key, Path: path, Baud: baud, Framing: f, Agent: true, Name: who})
+		open: func(adapter, path string, baud int, f serialx.Framing, who string) (Port, error) {
+			return share.Open(share.Options{Adapter: adapter, Path: path, Baud: baud, Framing: f, Agent: true, Name: who})
 		},
 	}
 }
@@ -403,7 +403,7 @@ func (s *server) connect(ctx context.Context, req *mcp.CallToolRequest, in conne
 	if s.con != nil {
 		closed = s.closeConsole() + "\n"
 	}
-	port, err := s.open(p.Key, p.OpenPath(), baud, framing, clientName(req))
+	port, err := s.open(p.Adapter(), p.OpenPath(), baud, framing, clientName(req))
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s%w", closed, serialx.OpenError(p.OpenPath(), err))
 	}

@@ -29,11 +29,13 @@ const cablePoll = 500 * time.Millisecond
 // waits again). The list follows cables as they're plugged in and pulled
 // out, and the cursor jumps to the one just plugged in, which is how you
 // tell identical cables apart. known says what bauddy remembers about a
-// port ("core-sw · 9600 last time"). q, esc or ctrl+c gives up with
+// port ("core-sw · 9600 last time"), and inUse whether another bauddy has
+// its console open: those are tagged, listed last, and joined if chosen.
+// q, esc or ctrl+c gives up with
 // ErrQuit. Other keys are dropped, so nothing reaches the device later. If
 // listing ports fails, it keeps trying.
-func PickCable(ports []serialx.PortInfo, hint string, known func(serialx.PortInfo) string) (serialx.PortInfo, error) {
-	m := newCableModel(ports, hint, known, serialx.List)
+func PickCable(ports []serialx.PortInfo, hint string, known func(serialx.PortInfo) string, inUse func(serialx.PortInfo) bool) (serialx.PortInfo, error) {
+	m := newCableModel(ports, hint, known, inUse, serialx.List)
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		return serialx.PortInfo{}, err
 	}
@@ -48,19 +50,48 @@ func PickCable(ports []serialx.PortInfo, hint string, known func(serialx.PortInf
 type cableModel struct {
 	hint          string
 	known         func(serialx.PortInfo) string
+	inUse         func(serialx.PortInfo) bool
 	list          func() ([]serialx.PortInfo, error)
 	width, height int
 
 	rows        []serialx.PortInfo // in the order they appeared, so rows don't jump
 	cursor      int
-	listing     bool     // the list is up, so only you connect; never with no rows
-	justPlugged string   // path of the cable plugged in while listing, if still there
-	lastLook    []string // paths at the last look: waiting goes on when they repeat
+	listing     bool            // the list is up, so only you connect; never with no rows
+	justPlugged string          // path of the cable plugged in while listing, if still there
+	lastLook    []string        // paths at the last look: waiting goes on when they repeat
+	open        map[string]bool // paths whose console another bauddy has open
 	chosen      *serialx.PortInfo
 }
 
-func newCableModel(ports []serialx.PortInfo, hint string, known func(serialx.PortInfo) string, list func() ([]serialx.PortInfo, error)) *cableModel {
-	return &cableModel{hint: hint, known: known, list: list, rows: ports, listing: len(ports) > 0}
+func newCableModel(ports []serialx.PortInfo, hint string, known func(serialx.PortInfo) string, inUse func(serialx.PortInfo) bool, list func() ([]serialx.PortInfo, error)) *cableModel {
+	m := &cableModel{hint: hint, known: known, inUse: inUse, list: list, listing: len(ports) > 0, rows: slices.Clone(ports)}
+	m.checkOpen(ports)
+	m.openLast()
+	return m
+}
+
+// openLast puts cables open in another window last, with the cursor on the
+// first, as the list goes up: a second window is usually for the other
+// cable. After that rows stay put.
+func (m *cableModel) openLast() {
+	slices.SortStableFunc(m.rows, func(a, b serialx.PortInfo) int {
+		switch {
+		case m.open[a.Path] == m.open[b.Path]:
+			return 0
+		case m.open[b.Path]:
+			return -1
+		}
+		return 1
+	})
+	m.cursor = 0
+}
+
+// checkOpen notes which ports' consoles another bauddy has open.
+func (m *cableModel) checkOpen(ports []serialx.PortInfo) {
+	m.open = map[string]bool{}
+	for _, p := range ports {
+		m.open[p.Path] = m.inUse != nil && m.inUse(p)
+	}
 }
 
 type cableTick struct{}
@@ -83,6 +114,7 @@ func (m *cableModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.tick() // not a look
 		}
 		m.follow(ports)
+		m.checkOpen(ports)
 		// Waiting: go on once the same ports are there at two looks in a
 		// row, so all of a multi-port adapter's ports are in, then connect
 		// to a lone one or list several.
@@ -93,6 +125,7 @@ func (m *cableModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			m.listing = true
+			m.openLast()
 		}
 		m.lastLook = paths
 		return m, m.tick()
@@ -242,6 +275,9 @@ func (m *cableModel) listLines(h int) []string {
 		// cuts that first.
 		if r.Path == m.justPlugged {
 			line += "  " + lipgloss.NewStyle().Background(cAccent).Foreground(cOnAccent).Render(" just plugged in ")
+		}
+		if m.open[r.Path] {
+			line += "  open in bauddy"
 		}
 		if m.known != nil {
 			if s := m.known(r); s != "" {

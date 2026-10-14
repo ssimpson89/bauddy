@@ -135,7 +135,7 @@ func run(arg string, o *rootOpts, version string) error {
 	// A bauddy started from Claude Code's shell is the AI tool looking, so
 	// it joins as one: no earlier output, and it can't type or unpause.
 	byAgent := os.Getenv("CLAUDECODE") != ""
-	opts := share.Options{Key: port.Key, Path: port.OpenPath(), Baud: baud, Framing: framing,
+	opts := share.Options{Adapter: port.Adapter(), Path: port.OpenPath(), Baud: baud, Framing: framing,
 		Replay: !byAgent, Agent: byAgent, Name: map[bool]string{true: "Claude Code"}[byAgent]}
 	sess, err := share.Open(opts)
 	if waited {
@@ -219,7 +219,8 @@ func resolvePort(arg string, store *profile.Store) (serialx.PortInfo, bool, erro
 		hint := "Plug in your console cable and bauddy will connect to it.\n\n" +
 			"Already plugged in? The cable may need a driver from its maker.\n\n" +
 			"Know the port? Press q, then run: bauddy " + portExample()
-		p, err := tui.PickCable(ports, hint, func(p serialx.PortInfo) string { return remembered(store.Adapter(p.Key)) })
+		p, err := tui.PickCable(ports, hint, func(p serialx.PortInfo) string { return remembered(store.Adapter(p.Key)) },
+			func(p serialx.PortInfo) bool { return share.InUse(p.Adapter(), p.OpenPath()) })
 		return p, true, err
 	}
 	p, err := serialx.Choose(arg, ports, store.KeyForName)
