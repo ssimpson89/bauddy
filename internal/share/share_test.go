@@ -156,6 +156,48 @@ func TestWindowsShareOnePort(t *testing.T) {
 	eventually(t, "the new baud everywhere", func() bool { return a.Baud() == 19200 && b.Baud() == 19200 })
 }
 
+// Windows waiting for a cable all see it at once and open it together.
+func TestWindowsOpeningAtOnceShareOnePort(t *testing.T) {
+	k := newConsole(t)
+	const n = 4
+	clients, errs := make([]*Client, n), make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			clients[i], errs[i] = Open(Options{Key: k.key, Path: "/dev/ttyTEST", Baud: 9600, Replay: true,
+				Open: func(string, int, serialx.Framing) (Port, error) {
+					p := newFakePort()
+					k.mu.Lock()
+					k.ports = append(k.ports, p)
+					k.mu.Unlock()
+					return p, nil
+				}})
+		})
+	}
+	wg.Wait()
+	for _, c := range clients {
+		if c != nil {
+			t.Cleanup(func() { c.Close() })
+		}
+	}
+	holders := 0
+	for i, c := range clients {
+		if errs[i] != nil {
+			t.Fatalf("window %d: %v", i, errs[i])
+		}
+		if !c.Joined() {
+			holders++
+		}
+	}
+	k.mu.Lock()
+	opened := len(k.ports)
+	k.mu.Unlock()
+	if holders != 1 || opened != 1 {
+		t.Fatalf("want one window holding one port: %d holding, %d ports opened", holders, opened)
+	}
+	eventually(t, "every window counted", func() bool { return clients[0].Status().Windows == n })
+}
+
 func TestAnAIToolSeesNothingFromBeforeItJoined(t *testing.T) {
 	k := newConsole(t)
 	w := k.open(false)

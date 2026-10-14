@@ -17,7 +17,7 @@ tested on real hardware or on Windows, so expect rough edges and please
 ## What it does
 
 - **Finds the port.** With one USB adapter it connects straight away. With
-  several, it asks which one.
+  several, it asks which one. With none plugged in yet, it waits for one.
 - **Finds the baud rate.** It listens to the device and picks the rate that
   makes sense, then remembers it for that cable. It won't send anything to
   the device without asking first.
