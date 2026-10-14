@@ -20,13 +20,14 @@ func usbPort(n int) serialx.PortInfo {
 // cables is a cable screen whose ports are whatever found holds.
 type cables struct {
 	*cableModel
-	found []serialx.PortInfo
-	err   error
+	found     []serialx.PortInfo
+	err       error
+	openPaths map[string]bool // consoles open in another bauddy
 }
 
 func newCables(t *testing.T, start ...serialx.PortInfo) *cables {
 	t.Helper()
-	c := &cables{}
+	c := &cables{openPaths: map[string]bool{}}
 	c.cableModel = newCableModel(start, "Plug in your console cable and bauddy will connect to it.",
 		func(p serialx.PortInfo) string {
 			if p.Path == "/dev/ttyUSB0" {
@@ -34,6 +35,7 @@ func newCables(t *testing.T, start ...serialx.PortInfo) *cables {
 			}
 			return ""
 		},
+		func(p serialx.PortInfo) bool { return c.openPaths[p.Path] },
 		func() ([]serialx.PortInfo, error) { return c.found, c.err })
 	c.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
 	return c
@@ -271,5 +273,45 @@ func TestTwinCablesKeepTheirRows(t *testing.T) {
 	}
 	if s := c.screen(); strings.Count(s, "just plugged in") != 1 || !strings.Contains(s, "ttyUSB0   just plugged in") {
 		t.Errorf("only the replugged twin is marked:\n%s", s)
+	}
+}
+
+func TestCablesOpenInAnotherBauddy(t *testing.T) {
+	c := &cables{openPaths: map[string]bool{"/dev/ttyUSB0": true}}
+	c.cableModel = newCableModel([]serialx.PortInfo{usbPort(0), usbPort(1)}, "",
+		func(serialx.PortInfo) string { return "" },
+		func(p serialx.PortInfo) bool { return c.openPaths[p.Path] },
+		func() ([]serialx.PortInfo, error) { return c.found, nil })
+	c.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	s := c.screen()
+	if !strings.Contains(s, "▸ 1  FT232R USB UART  ttyUSB1") || !strings.Contains(s, "2  FT232R USB UART  ttyUSB0  open in bauddy") {
+		t.Errorf("want the free cable first under the cursor, the open one last and tagged:\n%s", s)
+	}
+
+	// The other window closes: the tag goes at the next look; nothing moves.
+	delete(c.openPaths, "/dev/ttyUSB0")
+	c.look(usbPort(0), usbPort(1))
+	if s := c.screen(); strings.Contains(s, "open in bauddy") || c.rows[1].Path != "/dev/ttyUSB0" {
+		t.Errorf("after the other window closed:\n%s", s)
+	}
+
+	// Choosing an open one is allowed: it joins.
+	c.openPaths["/dev/ttyUSB1"] = true
+	c.look(usbPort(0), usbPort(1))
+	c.press(enter)
+	if c.chose() != "/dev/ttyUSB1" {
+		t.Errorf("enter on a cable open elsewhere chose %q; want it, to join", c.chose())
+	}
+}
+
+// Starting with no cable, the list goes up once ports settle; cables open
+// elsewhere go last then too.
+func TestWaitingThenListingPutsOpenCablesLast(t *testing.T) {
+	c := newCables(t)
+	c.openPaths["/dev/ttyUSB0"] = true
+	c.look(usbPort(0), usbPort(1))
+	c.look(usbPort(0), usbPort(1))
+	if !c.listing || c.rows[0].Path != "/dev/ttyUSB1" || c.cursor != 0 {
+		t.Errorf("listing %v, rows %s %s, cursor %d: want the free ttyUSB1 first, under the cursor", c.listing, c.rows[0].Path, c.rows[1].Path, c.cursor)
 	}
 }

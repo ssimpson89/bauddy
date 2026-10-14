@@ -159,3 +159,21 @@ func TestManagementPortsAreSpotted(t *testing.T) {
 		}
 	}
 }
+
+func TestAdapterIgnoresTwins(t *testing.T) {
+	twins := []PortInfo{
+		{Path: "/dev/ttyUSB0", USB: true, VID: "0403", PID: "6001", Serial: "A50285BI"},
+		{Path: "/dev/ttyUSB1", USB: true, VID: "0403", PID: "6001", Serial: "A50285BI"},
+		{Path: "/dev/ttyUSB2", USB: true, VID: "1A86", PID: "7523"}, // a CH340 with no serial
+		{Path: "/dev/ttyS0"},
+	}
+	assignKeys(twins)
+	if twins[0].Key == twins[1].Key {
+		t.Errorf("twins share the key %q; saved settings need them apart", twins[0].Key)
+	}
+	for i, want := range []string{"usb:0403:6001:A50285BI", "usb:0403:6001:A50285BI", "", ""} {
+		if got := twins[i].Adapter(); got != want {
+			t.Errorf("%s: Adapter() = %q, want %q (the same for both twins, whatever else is plugged in)", twins[i].Path, got, want)
+		}
+	}
+}

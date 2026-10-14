@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -56,7 +57,7 @@ func (p *fakePort) Detect(serialx.DetectConfig) (serialx.Result, error) {
 // options, and each port opened is recorded.
 type console struct {
 	t     *testing.T
-	key   string
+	path  string
 	mu    sync.Mutex
 	ports []*fakePort
 }
@@ -68,13 +69,13 @@ func newConsole(t *testing.T) *console {
 	}
 	t.Cleanup(func() { os.RemoveAll(d) })
 	t.Setenv("XDG_RUNTIME_DIR", d)
-	return &console{t: t, key: t.Name()}
+	return &console{t: t, path: "/dev/ttyTEST"}
 }
 
 func (k *console) open(agent bool) *Client {
 	k.t.Helper()
 	c, err := Open(Options{
-		Key: k.key, Path: "/dev/ttyTEST", Baud: 9600, Agent: agent, Name: map[bool]string{true: "Claude Code"}[agent],
+		Path: k.path, Baud: 9600, Agent: agent, Name: map[bool]string{true: "Claude Code"}[agent],
 		Replay: !agent,
 		Open: func(_ string, baud int, _ serialx.Framing) (Port, error) {
 			p := newFakePort()
@@ -164,7 +165,7 @@ func TestWindowsOpeningAtOnceShareOnePort(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Go(func() {
-			clients[i], errs[i] = Open(Options{Key: k.key, Path: "/dev/ttyTEST", Baud: 9600, Replay: true,
+			clients[i], errs[i] = Open(Options{Path: k.path, Baud: 9600, Replay: true,
 				Open: func(string, int, serialx.Framing) (Port, error) {
 					p := newFakePort()
 					k.mu.Lock()
@@ -209,7 +210,7 @@ func TestAnAIToolSeesNothingFromBeforeItJoined(t *testing.T) {
 		t.Errorf("an AI tool should get only the current line: %q", got)
 	}
 	eventually(t, "the AI tool shown", func() bool { return w.Status().Agent == "Claude Code" })
-	if second, err := Open(Options{Key: k.key, Path: "/dev/ttyTEST", Agent: true, Name: "Codex"}); err == nil {
+	if second, err := Open(Options{Path: k.path, Agent: true, Name: "Codex"}); err == nil {
 		second.Close()
 		t.Error("a second AI tool should be refused")
 	}
@@ -463,7 +464,7 @@ func TestClosingDuringATakeoverLeavesNothingBehind(t *testing.T) {
 	a.Close()
 	b.Close() // possibly while it's taking over
 	eventually(t, "the lock free", func() bool {
-		_, lockPath, _ := paths(k.key)
+		_, lockPath, _ := paths(consoleName("", k.path))
 		f, err := lock(lockPath)
 		if err == nil {
 			f.Close()
@@ -589,5 +590,220 @@ func TestTheToolsCtrlCClearsItsLine(t *testing.T) {
 	eventually(t, "stopped", func() bool { return why() != "" })
 	if why() != StopPaused || k.port(0).written() != "show tech\x03" {
 		t.Errorf("stopped because %q, written %q", why(), k.port(0).written())
+	}
+}
+
+func TestInUse(t *testing.T) {
+	k := newConsole(t)
+	if InUse("", k.path) {
+		t.Fatal("nothing open: want not in use")
+	}
+	a := k.open(false)
+	b := k.open(false)
+	eventually(t, "both windows counted", func() bool { return a.Status().Windows == 2 })
+	time.Sleep(50 * time.Millisecond)
+	for len(a.Notes()) > 0 {
+		<-a.Notes() // the second window joining
+	}
+	if !InUse("", k.path) {
+		t.Fatal("open in a window: want in use")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if w, n := a.Status().Windows, len(a.Notes()); w != 2 || n != 0 {
+		t.Errorf("after the check: %d windows, %d notes; want it unnoticed (2, 0)", w, n)
+	}
+	a.Close()
+	b.Close()
+	eventually(t, "not in use once both windows close", func() bool { return !InUse("", k.path) })
+}
+
+// Twin cables share a serial number, and by-id points at one of them, maybe
+// a different one after the other is plugged in. A console is the device
+// node a path leads to, so every way of reaching a twin is one console,
+// and the other twin is another.
+func TestTwinCablesAreTwoConsoles(t *testing.T) {
+	newConsole(t)
+	dev := t.TempDir()
+	for _, f := range []string{"ttyUSB0", "ttyUSB1"} {
+		if err := os.WriteFile(filepath.Join(dev, f), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	twin0, twin1 := filepath.Join(dev, "ttyUSB0"), filepath.Join(dev, "ttyUSB1")
+	byID := filepath.Join(dev, "usb-FTDI_FT232R_A50285BI-if00-port0")
+	if err := os.Symlink(twin0, byID); err != nil {
+		t.Fatal(err)
+	}
+	const adapter = "usb:0403:6001:A50285BI"
+	open := func(path string) *Client {
+		t.Helper()
+		c, err := Open(Options{Adapter: adapter, Path: path, Baud: 9600, Replay: true,
+			Open: func(string, int, serialx.Framing) (Port, error) { return newFakePort(), nil }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		return c
+	}
+
+	a := open(byID) // twin 0, opened by its by-id link
+	if !InUse(adapter, twin0) || !InUse(adapter, byID) || InUse(adapter, twin1) {
+		t.Fatalf("twin 0 held: in use %v by node, %v by link; twin 1 %v", InUse(adapter, twin0), InUse(adapter, byID), InUse(adapter, twin1))
+	}
+	// Twin 1 is plugged in and udev points by-id at it instead.
+	if err := os.Remove(byID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(twin1, byID); err != nil {
+		t.Fatal(err)
+	}
+	if !InUse(adapter, twin0) || InUse(adapter, twin1) {
+		t.Errorf("after by-id moved: twin 0 in use %v, twin 1 %v; want true, false", InUse(adapter, twin0), InUse(adapter, twin1))
+	}
+	if b := open(twin0); !b.Joined() {
+		t.Error("a window on twin 0's node should join the window holding it")
+	}
+	if c := open(twin1); c.Joined() {
+		t.Error("a window on twin 1 should hold it, not join twin 0's console")
+	}
+	a.Close()
+
+	// Another cable that comes up on twin 0's node isn't twin 0.
+	other := "usb:067B:2303:OTHER"
+	open(twin0) // twin 0's console, held again
+	if InUse(other, twin0) {
+		t.Error("a different cable on the same node: want not in use")
+	}
+	c, err := Open(Options{Adapter: other, Path: twin0, Open: func(string, int, serialx.Framing) (Port, error) { return newFakePort(), nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if c.Joined() {
+		t.Error("a different cable on the same node should hold its own console, not join twin 0's")
+	}
+}
+
+func TestConsoleName(t *testing.T) {
+	dir := t.TempDir()
+	node := filepath.Join(dir, "ttyUSB0")
+	if err := os.WriteFile(node, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "by-id")
+	if err := os.Symlink(node, link); err != nil {
+		t.Fatal(err)
+	}
+	real, _ := filepath.EvalSymlinks(node)
+	for path, want := range map[string]string{
+		link:             "usb:1:2:3@" + real, // a link names its node
+		node:             "usb:1:2:3@" + real,
+		dir + "/gone":    "usb:1:2:3@" + dir + "/gone", // unplugged: the path itself
+		"/nonexistent/x": "usb:1:2:3@/nonexistent/x",
+	} {
+		if got := consoleName("usb:1:2:3", path); got != want {
+			t.Errorf("consoleName(%s) = %q, want %q", path, got, want)
+		}
+	}
+	if InUse("", "/nonexistent/x") {
+		t.Error("a path that doesn't exist: want not in use")
+	}
+}
+
+// Copilot's case: every window reached twin 0 through by-id, by-id then
+// moved to twin 1, and the holder quits. The window taking over must open
+// twin 0, the console it named, not wherever by-id leads now.
+func TestATakeoverOpensTheConsolesOwnDevice(t *testing.T) {
+	newConsole(t)
+	dev := t.TempDir()
+	twin0, twin1 := filepath.Join(dev, "ttyUSB0"), filepath.Join(dev, "ttyUSB1")
+	for _, f := range []string{twin0, twin1} {
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	byID := filepath.Join(dev, "by-id")
+	if err := os.Symlink(twin0, byID); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var opened []string
+	open := func() *Client {
+		t.Helper()
+		c, err := Open(Options{Adapter: "usb:0403:6001:A50285BI", Path: byID, Baud: 9600,
+			Open: func(path string, _ int, _ serialx.Framing) (Port, error) {
+				mu.Lock()
+				opened = append(opened, path)
+				mu.Unlock()
+				return newFakePort(), nil
+			}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		return c
+	}
+	a, b := open(), open()
+	if !b.Joined() {
+		t.Fatal("the second window should join")
+	}
+	if err := os.Remove(byID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(twin1, byID); err != nil {
+		t.Fatal(err)
+	}
+	a.Close()
+	eventually(t, "the takeover", func() bool { mu.Lock(); defer mu.Unlock(); return len(opened) == 2 })
+	real0, _ := filepath.EvalSymlinks(twin0)
+	mu.Lock()
+	got := opened[1]
+	mu.Unlock()
+	if got != real0 {
+		t.Errorf("the takeover opened %s; want twin 0's own device, %s", got, real0)
+	}
+	if !InUse("usb:0403:6001:A50285BI", twin0) || InUse("usb:0403:6001:A50285BI", twin1) {
+		t.Error("after the takeover: want twin 0 in use and twin 1 free")
+	}
+}
+
+func TestHoldOpensTheConsolesOwnDevice(t *testing.T) {
+	dev := t.TempDir()
+	twin0, twin1 := filepath.Join(dev, "ttyUSB0"), filepath.Join(dev, "ttyUSB1")
+	for _, f := range []string{twin0, twin1} {
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	byID := filepath.Join(dev, "by-id")
+	if err := os.Symlink(twin0, byID); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{opt: Options{Path: byID}, node: deviceNode(byID)}
+	if got := c.portPath(); got != byID {
+		t.Errorf("by-id still leads to the console: opens %s, want the link, so reconnects follow the cable", got)
+	}
+	// While it waited for the lock, a twin was plugged in and by-id moved.
+	os.Remove(byID)
+	if err := os.Symlink(twin1, byID); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.portPath(); got != c.node {
+		t.Errorf("by-id moved to the twin: opens %s, want the console's own device %s", got, c.node)
+	}
+	// Unplugged: the console's device is gone, so the path, which may find
+	// the cable again.
+	os.Remove(twin0)
+	if got := c.portPath(); got != byID {
+		t.Errorf("console's device gone: opens %s, want the path", got)
+	}
+	// The cable is out (by-id gone) and another cable has its old name: the
+	// path, which fails, rather than the other cable.
+	os.Remove(byID)
+	if err := os.WriteFile(twin0, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.portPath(); got != byID {
+		t.Errorf("cable out, its old name reused: opens %s, want the path, not another cable", got)
 	}
 }

@@ -53,8 +53,8 @@ const (
 
 // Options say which console to open and as what.
 type Options struct {
-	Key     string // the adapter's key: bauddys with the same key share
-	Path    string // the port to open
+	Adapter string // the cable's own identity (serialx.PortInfo.Adapter), if it has one
+	Path    string // the port to open; bauddys reaching the same cable share it
 	Baud    int
 	Framing serialx.Framing
 	Agent   bool   // an AI tool (bauddy mcp), not a window
@@ -77,11 +77,13 @@ type Note struct {
 // of a serial session, so the console and the MCP server use it the same
 // way, plus the sharing controls.
 type Client struct {
-	opt    Options
-	events chan serialx.Event
-	taps   serialx.Taps
-	notes  chan Note
-	done   chan struct{} // closed by Close
+	opt     Options
+	node    string // the device the port's path led to at Open
+	console string // what its lock and socket are named after (see consoleName)
+	events  chan serialx.Event
+	taps    serialx.Taps
+	notes   chan Note
+	done    chan struct{} // closed by Close
 
 	qmu   sync.Mutex
 	queue []serialx.Event // events waiting for forward
@@ -119,6 +121,8 @@ func Open(opt Options) (*Client, error) {
 		opt: opt, events: make(chan serialx.Event, 256), notes: make(chan Note, 64),
 		done: make(chan struct{}), wake: make(chan struct{}, 1), pending: map[int]chan msg{},
 	}
+	c.node = deviceNode(opt.Path)
+	c.console = opt.Adapter + "@" + c.node // once, so a takeover can't split the windows
 	w, err := c.connect(time.Now().Add(joinWait), true)
 	if err != nil {
 		return nil, err
@@ -128,9 +132,42 @@ func Open(opt Options) (*Client, error) {
 	return c, nil
 }
 
-// paths returns the socket and lock for a key, or ok false if this console
-// can't be shared here.
-func paths(key string) (sock, lock string, ok bool) {
+// consoleName names the console for a cable by two things. The device node
+// its path leads to: every way of reaching one cable (a by-id link,
+// /dev/ttyUSB0) is one console, and identical twins are two. And the
+// cable's identity: another cable that comes up on the same node isn't
+// this one. A port bauddy doesn't list (a pty) has no identity, only a node.
+func consoleName(adapter, path string) string { return adapter + "@" + deviceNode(path) }
+
+// deviceNode is the device a path leads to (a by-id link to /dev/ttyUSB0),
+// or the path itself if it leads nowhere now.
+func deviceNode(path string) string {
+	if node, err := filepath.EvalSymlinks(path); err == nil {
+		return node
+	}
+	return path
+}
+
+// InUse says whether another bauddy (a window, or bauddy mcp) has the
+// console for a cable open, by reaching its socket and hanging up, which
+// the hub ignores. It takes no lock, so it can't get in the way of a bauddy
+// starting up, and it never touches the port.
+func InUse(adapter, path string) bool {
+	sock, _, ok := paths(consoleName(adapter, path))
+	if !ok {
+		return false
+	}
+	conn, err := net.DialTimeout("unix", sock, 200*time.Millisecond)
+	if err != nil {
+		return false // nobody, or a socket left by a bauddy that died
+	}
+	conn.Close()
+	return true
+}
+
+// paths returns the socket and lock for a console, or ok false if it can't
+// be shared here.
+func paths(console string) (sock, lock string, ok bool) {
 	if !sharing {
 		return "", "", false
 	}
@@ -138,7 +175,7 @@ func paths(key string) (sock, lock string, ok bool) {
 	if err != nil {
 		return "", "", false
 	}
-	sum := sha256.Sum256([]byte(key))
+	sum := sha256.Sum256([]byte(console))
 	name := hex.EncodeToString(sum[:6])
 	sock = filepath.Join(d, name+".sock")
 	if len(sock) > 100 { // the socket path limit is about 104 bytes
@@ -152,7 +189,7 @@ func paths(key string) (sock, lock string, ok bool) {
 // bauddy is starting up or letting go. At first, a port that won't open is
 // reported at once.
 func (c *Client) connect(deadline time.Time, first bool) (*wire, error) {
-	sock, lockPath, ok := paths(c.opt.Key)
+	sock, lockPath, ok := paths(c.console)
 	if !ok {
 		return c.hold(nil, "") // can't share here: just open the port, as before
 	}
@@ -183,6 +220,22 @@ func (c *Client) connect(deadline time.Time, first bool) (*wire, error) {
 	}
 }
 
+// portPath is what hold opens: the path, unless it now leads to another
+// device than the one Open named the console after (by-id moves to a twin
+// cable plugged in later), and then the console's own device. A path that
+// leads nowhere (the cable is out) is opened as it is, and fails: the
+// console's old device name may belong to another cable by now.
+func (c *Client) portPath() string {
+	node, err := filepath.EvalSymlinks(c.opt.Path)
+	if err != nil || node == c.node {
+		return c.opt.Path
+	}
+	if _, err := os.Stat(c.node); err != nil {
+		return c.opt.Path
+	}
+	return c.node
+}
+
 // hold opens the port and shares it, with this process as the first
 // client of its own hub. After a takeover it opens at the console's rate,
 // not the one it started with.
@@ -194,7 +247,7 @@ func (c *Client) hold(lockFile *os.File, sock string) (*wire, error) {
 		framing, _ = serialx.ParseFraming(c.status.Framing)
 	}
 	c.mu.Unlock()
-	port, err := c.opt.Open(c.opt.Path, baud, framing)
+	port, err := c.opt.Open(c.portPath(), baud, framing)
 	if err != nil {
 		if lockFile != nil {
 			lockFile.Close()

@@ -29,6 +29,15 @@ func (p PortInfo) OpenPath() string {
 	return p.Path
 }
 
+// Adapter is the cable's own identity, "usb:VID:PID:SERIAL", or "" if it has
+// none. Unlike Key it doesn't change with the other ports plugged in.
+func (p PortInfo) Adapter() string {
+	if !p.USB || p.Serial == "" {
+		return ""
+	}
+	return "usb:" + p.VID + ":" + p.PID + ":" + p.Serial
+}
+
 // USBID returns "VID:PID", or "" for non-USB ports.
 func (p PortInfo) USBID() string {
 	if !p.USB {
@@ -78,8 +87,8 @@ func assignKeys(ports []PortInfo) {
 	for i := range ports {
 		p := &ports[i]
 		switch {
-		case p.USB && p.Serial != "":
-			p.Key = "usb:" + p.VID + ":" + p.PID + ":" + p.Serial
+		case p.Adapter() != "":
+			p.Key = p.Adapter()
 		default:
 			p.Key = p.OpenPath()
 		}
