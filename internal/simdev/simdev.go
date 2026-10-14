@@ -25,8 +25,9 @@ type Device struct {
 	NoEcho   bool                     // never echo input
 
 	out     chan []byte
-	outMu   sync.Mutex
-	outNext time.Time // when the transmitter is next free
+	outMu   sync.Mutex // held while sending, so output leaves in order, as on a wire
+	outNext time.Time  // when the transmitter is next free
+	talk    sync.Mutex // the CLI's echo and a syslog reprint of the line don't cross
 
 	mu      sync.Mutex
 	wire    []byte // sent by the host, still in transit
@@ -141,6 +142,7 @@ func (d *Device) cpuLoop(ctx context.Context) {
 		d.fifo = d.fifo[1:]
 		d.mu.Unlock()
 
+		d.talk.Lock()
 		if c != '\r' {
 			line = append(line, c)
 			d.mu.Lock()
@@ -156,6 +158,7 @@ func (d *Device) cpuLoop(ctx context.Context) {
 			default:
 				d.send(ctx, string(c))
 			}
+			d.talk.Unlock()
 			continue
 		}
 		d.send(ctx, "\r\n")
@@ -163,6 +166,7 @@ func (d *Device) cpuLoop(ctx context.Context) {
 		d.mu.Lock()
 		d.typed = ""
 		d.mu.Unlock()
+		d.talk.Unlock()
 		d.run(ctx, strings.TrimSpace(string(line)))
 		line = line[:0]
 	}
@@ -283,13 +287,13 @@ func (d *Device) setMode(m string) {
 // as a running budget because OS timers are too coarse to sleep per byte.
 func (d *Device) send(ctx context.Context, s string) {
 	d.outMu.Lock()
+	defer d.outMu.Unlock()
 	now := time.Now()
 	if d.outNext.Before(now) {
 		d.outNext = now
 	}
 	d.outNext = d.outNext.Add(time.Duration(len(s)) * d.byteTime())
 	wait := d.outNext.Sub(now)
-	d.outMu.Unlock()
 	if wait > time.Millisecond {
 		select {
 		case <-time.After(wait):
@@ -306,12 +310,14 @@ func (d *Device) noiseLoop(ctx context.Context) {
 		select {
 		case <-time.After(d.Noise):
 			msg := "\r\n%LINK-3-UPDOWN: Interface Gi1/0/9, changed state to up\r\n"
+			d.talk.Lock()
 			if d.SyncLog {
 				d.mu.Lock()
 				msg += d.prompt() + d.typed
 				d.mu.Unlock()
 			}
 			d.send(ctx, msg)
+			d.talk.Unlock()
 		case <-ctx.Done():
 			return
 		}
