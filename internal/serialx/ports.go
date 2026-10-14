@@ -6,8 +6,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-
-	"go.bug.st/serial/enumerator"
 )
 
 // PortInfo describes a serial device on this machine.
@@ -46,7 +44,7 @@ func Manual(path string) PortInfo {
 
 // List returns usable serial ports, filtering out platform noise.
 func List() ([]PortInfo, error) {
-	details, err := enumerator.GetDetailedPortsList()
+	details, err := osPorts()
 	if err != nil {
 		return nil, err
 	}
