@@ -62,6 +62,12 @@ func Choose(arg string, ports []PortInfo, named func(string) (string, bool)) (Po
 	return PortInfo{}, &SeveralError{Ports: ports}
 }
 
+// IsPermissionDenied says whether err is the port refusing you access.
+func IsPermissionDenied(err error) bool {
+	var pe interface{ Code() serial.PortErrorCode }
+	return errors.As(err, &pe) && pe.Code() == serial.PermissionDenied
+}
+
 // OpenError explains the common reasons a port won't open, with what to do
 // about them.
 func OpenError(path string, err error) error {

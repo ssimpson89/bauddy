@@ -1,6 +1,9 @@
 package cli
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestEscapeKey(t *testing.T) {
 	t.Setenv("BAUDDY_ESCAPE", "ctrl+t")
@@ -13,5 +16,16 @@ func TestEscapeKey(t *testing.T) {
 	t.Setenv("BAUDDY_ESCAPE", "")
 	if got := escapeKey(""); got != "ctrl+]" {
 		t.Errorf("default: got %q, want ctrl+]", got)
+	}
+}
+
+func TestDevNullIsntATerminal(t *testing.T) {
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if isTerminal(f) {
+		t.Error("/dev/null counted as a terminal, so bauddy < /dev/null would wait for a cable unseen")
 	}
 }

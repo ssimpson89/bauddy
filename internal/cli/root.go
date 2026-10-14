@@ -12,8 +12,10 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
 	"github.com/ssimpson89/bauddy/internal/keymap"
@@ -28,9 +30,16 @@ const defaultBaud = 115200
 // noPortsHint adds how to name a port yourself, with an example in this
 // system's style, for a port bauddy can't see (a pseudo-terminal, say).
 func noPortsHint() string {
-	example := map[string]string{"darwin": "/dev/cu.usbserial-1410", "windows": "COM3"}[runtime.GOOS]
-	return serialx.ErrNoPorts.Error() + " You can also name the port: bauddy " + cmp.Or(example, "/dev/ttyUSB0")
+	return serialx.ErrNoPorts.Error() + " You can also name the port: bauddy " + portExample()
 }
+
+func portExample() string {
+	return cmp.Or(map[string]string{"darwin": "/dev/cu.usbserial-1410", "windows": "COM3"}[runtime.GOOS], "/dev/ttyUSB0")
+}
+
+// isTerminal says whether f is a terminal, not a pipe, a file or a device
+// such as /dev/null.
+func isTerminal(f *os.File) bool { return term.IsTerminal(f.Fd()) }
 
 type rootOpts struct {
 	baud    int
@@ -48,8 +57,9 @@ func NewRootCmd(version string) *cobra.Command {
 		Short: "A serial console with one key to remember",
 		Long: `bauddy connects to a serial console (servers, switches, routers, boards).
 
-With no port given, it uses your USB serial adapter, or asks which one if
-there are several. A port can be a path or a short name like ttyUSB0.
+With no port given, it uses your USB serial adapter, asks which one if there
+are several, or waits for one to be plugged in. A port can be a path or a
+short name like ttyUSB0.
 
 With no --baud, it uses the last rate used with this adapter. For a new
 adapter it listens for output and detects the rate, and asks before sending
@@ -96,7 +106,10 @@ func run(arg string, o *rootOpts, version string) error {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "warning: can't read saved settings:", err)
 	}
-	port, err := resolvePort(arg, store)
+	port, waited, err := resolvePort(arg, store)
+	if errors.Is(err, tui.ErrQuit) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -123,8 +136,17 @@ func run(arg string, o *rootOpts, version string) error {
 	// A bauddy started from Claude Code's shell is the AI tool looking, so
 	// it joins as one: no earlier output, and it can't type or unpause.
 	byAgent := os.Getenv("CLAUDECODE") != ""
-	sess, err := share.Open(share.Options{Key: port.Key, Path: port.OpenPath(), Baud: baud, Framing: framing,
-		Replay: !byAgent, Agent: byAgent, Name: map[bool]string{true: "Claude Code"}[byAgent]})
+	opts := share.Options{Key: port.Key, Path: port.OpenPath(), Baud: baud, Framing: framing,
+		Replay: !byAgent, Agent: byAgent, Name: map[bool]string{true: "Claude Code"}[byAgent]}
+	sess, err := share.Open(opts)
+	if waited {
+		// A cable that has just been plugged in can be refused for a moment
+		// on Linux, until udev gives the device its group: retry for up to 2 s.
+		for i := 0; serialx.IsPermissionDenied(err) && i < 10; i++ {
+			time.Sleep(200 * time.Millisecond)
+			sess, err = share.Open(opts)
+		}
+	}
 	if err != nil {
 		return serialx.OpenError(port.OpenPath(), err)
 	}
@@ -184,23 +206,37 @@ func escapeKey(flag string) string {
 }
 
 // resolvePort turns an optional argument into a port. With no argument, a
-// lone USB adapter connects straight away; otherwise the user picks one.
-func resolvePort(arg string, store *profile.Store) (serialx.PortInfo, error) {
+// lone USB adapter connects straight away; otherwise the user picks one. With
+// no ports at all, in a terminal, it waits for a cable to be plugged in, and
+// says so (waited), since a port that has only just appeared may still be
+// getting its permissions.
+func resolvePort(arg string, store *profile.Store) (serialx.PortInfo, bool, error) {
 	ports, err := serialx.List()
 	if err != nil {
-		return serialx.PortInfo{}, err
+		return serialx.PortInfo{}, false, err
+	}
+	waited := false
+	if arg == "" && len(ports) == 0 && isTerminal(os.Stdin) && isTerminal(os.Stdout) {
+		hint := "Plug in your console cable and bauddy will connect to it.\n\n" +
+			"Already plugged in? The cable may need a driver from its maker.\n\n" +
+			"Know the port? Press q, then run: bauddy " + portExample()
+		if ports, err = tui.WaitForCable(hint); err != nil {
+			return serialx.PortInfo{}, false, err
+		}
+		waited = true
 	}
 	p, err := serialx.Choose(arg, ports, store.KeyForName)
 	var several *serialx.SeveralError
 	switch {
 	case errors.As(err, &several):
-		return choosePort(several.Ports)
+		p, err = choosePort(several.Ports)
+		return p, waited, err
 	case errors.Is(err, serialx.ErrNoPorts):
-		return p, errors.New(noPortsHint())
+		return p, waited, errors.New(noPortsHint())
 	case errors.Is(err, serialx.ErrUnplugged):
-		return p, fmt.Errorf("%w; 'bauddy list' shows what is", err)
+		return p, waited, fmt.Errorf("%w; 'bauddy list' shows what is", err)
 	}
-	return p, err
+	return p, waited, err
 }
 
 // choosePort asks which of several ports to use.
@@ -209,7 +245,7 @@ func choosePort(ports []serialx.PortInfo) (serialx.PortInfo, error) {
 	for i, p := range ports {
 		fmt.Fprintf(&list, "  %d) %s  %s\n", i+1, p.OpenPath(), describe(p))
 	}
-	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+	if !isTerminal(os.Stdin) {
 		return serialx.PortInfo{}, fmt.Errorf("several serial ports found; pass one as an argument:\n%s", list.String())
 	}
 	fmt.Fprint(os.Stderr, "Several serial ports found:\n"+list.String()+"Connect to which? [1]: ")
