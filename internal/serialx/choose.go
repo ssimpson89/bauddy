@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"runtime"
 	"strings"
 
 	"go.bug.st/serial"
@@ -41,6 +42,9 @@ func Choose(arg string, ports []PortInfo, named func(string) (string, bool)) (Po
 				return Manual(key), nil // saved for a path that isn't enumerated
 			}
 			return PortInfo{}, fmt.Errorf("%s's adapter %w", arg, ErrUnplugged)
+		}
+		if runtime.GOOS != "windows" && !strings.Contains(arg, "/") {
+			arg = "/dev/" + arg // a short name for a port that isn't listed: ttyS4
 		}
 		return Manual(arg), nil
 	}

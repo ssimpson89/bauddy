@@ -3,6 +3,8 @@ package serialx
 import (
 	"errors"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -63,7 +65,8 @@ func TestChoose(t *testing.T) {
 		{"core", []PortInfo{usb, builtin}, "/dev/ttyUSB0", nil},
 		{"pty", nil, "/dev/pts/7", nil},
 		{"gone", []PortInfo{usb}, "", ErrUnplugged},
-		{"/dev/pts/3", nil, "/dev/pts/3", nil}, // not enumerated: try it anyway
+		{"/dev/pts/3", nil, "/dev/pts/3", nil},        // not enumerated: try it anyway
+		{"ttyS4", []PortInfo{usb}, "/dev/ttyS4", nil}, // a short name for one that isn't listed
 	} {
 		p, err := Choose(c.arg, c.ports, named)
 		if p.Path != c.want || !errors.Is(err, c.err) {
@@ -105,3 +108,54 @@ type portErr struct {
 
 func (e portErr) Error() string              { return e.msg }
 func (e portErr) Code() serial.PortErrorCode { return e.code }
+
+func TestManagementPortsAreSpotted(t *testing.T) {
+	for _, c := range []struct {
+		product string
+		want    bool
+	}{
+		{"Intel(R) Active Management Technology - SOL (COM3)", true},
+		{"Communications Port (COM1)", false},
+		{"USB Serial Port (COM4)", false},
+	} {
+		if got := amtName(c.product); got != c.want {
+			t.Errorf("amtName(%q) = %v", c.product, got)
+		}
+	}
+	// sysfs before Linux 6.8 (the tty's device is the PCI device) and after
+	// (it's a serial-base port below it), and a built-in port on the LPC bus.
+	root := t.TempDir()
+	pci := filepath.Join(root, "devices/pci0000:00/0000:00:16.3")
+	for _, d := range []string{pci + "/0000:00:16.3:0/0000:00:16.3:0.0", root + "/devices/pnp0/00:01", root + "/class/tty"} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(pci+"/vendor", []byte("0x8086\n"), 0o644)
+	os.WriteFile(pci+"/class", []byte("0x070002\n"), 0o644)
+	for tty, dev := range map[string]string{"ttyS4": pci, "ttyS5": pci + "/0000:00:16.3:0/0000:00:16.3:0.0", "ttyS0": root + "/devices/pnp0/00:01"} {
+		os.MkdirAll(filepath.Join(root, "class/tty", tty), 0o755)
+		if err := os.Symlink(dev, filepath.Join(root, "class/tty", tty, "device")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for tty, want := range map[string]bool{"ttyS4": true, "ttyS5": true, "ttyS0": false, "ttyUSB0": false} {
+		if got := amtSysfs(root, "/dev/"+tty); got != want {
+			t.Errorf("amtSysfs(%s) = %v, want %v", tty, got, want)
+		}
+	}
+
+	for _, c := range []struct {
+		vendor, class string
+		want          bool
+	}{
+		{"0x8086\n", "0x070002\n", true},  // Intel AMT serial-over-LAN
+		{"0x8086\n", "0x118000\n", false}, // Intel LPSS UART: a real port on embedded boards
+		{"0x1c00\n", "0x070002\n", false}, // a PCI serial card
+		{"", "", false},                   // a built-in port on the LPC bus
+	} {
+		if got := amtPCI(c.vendor, c.class); got != c.want {
+			t.Errorf("amtPCI(%q, %q) = %v", c.vendor, c.class, got)
+		}
+	}
+}

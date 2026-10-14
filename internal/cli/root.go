@@ -2,7 +2,6 @@
 package cli
 
 import (
-	"bufio"
 	"cmp"
 	"errors"
 	"fmt"
@@ -57,9 +56,9 @@ func NewRootCmd(version string) *cobra.Command {
 		Short: "A serial console with one key to remember",
 		Long: `bauddy connects to a serial console (servers, switches, routers, boards).
 
-With no port given, it uses your USB serial adapter, asks which one if there
-are several, or waits for one to be plugged in. A port can be a path or a
-short name like ttyUSB0.
+With no port given, it uses your serial cable, asks which one if there are
+several, or waits for one to be plugged in. A port can be a path or a short
+name like ttyUSB0.
 
 With no --baud, it uses the last rate used with this adapter. For a new
 adapter it listens for output and detects the rate, and asks before sending
@@ -205,60 +204,52 @@ func escapeKey(flag string) string {
 	return cmp.Or(flag, os.Getenv("BAUDDY_ESCAPE"), keymap.DefaultEscapeKey)
 }
 
-// resolvePort turns an optional argument into a port. With no argument, a
-// lone USB adapter connects straight away; otherwise the user picks one. With
-// no ports at all, in a terminal, it waits for a cable to be plugged in, and
-// says so (waited), since a port that has only just appeared may still be
-// getting its permissions.
+// resolvePort turns an optional argument into a port. With no argument, in a
+// terminal, a lone port connects straight away; otherwise the cable screen
+// waits for one or asks which, built-in ports included. Then waited is true:
+// the cable may have only just been plugged in, so it may still be getting
+// its permissions. Without a terminal, several ports is an error that lists
+// them (bauddy mcp and scripts keep Choose's rule: a lone USB cable wins).
 func resolvePort(arg string, store *profile.Store) (serialx.PortInfo, bool, error) {
 	ports, err := serialx.List()
 	if err != nil {
 		return serialx.PortInfo{}, false, err
 	}
-	waited := false
-	if arg == "" && len(ports) == 0 && isTerminal(os.Stdin) && isTerminal(os.Stdout) {
+	if arg == "" && len(ports) != 1 && isTerminal(os.Stdin) && isTerminal(os.Stdout) {
 		hint := "Plug in your console cable and bauddy will connect to it.\n\n" +
 			"Already plugged in? The cable may need a driver from its maker.\n\n" +
 			"Know the port? Press q, then run: bauddy " + portExample()
-		if ports, err = tui.WaitForCable(hint); err != nil {
-			return serialx.PortInfo{}, false, err
-		}
-		waited = true
+		p, err := tui.PickCable(ports, hint, func(p serialx.PortInfo) string { return remembered(store.Adapter(p.Key)) })
+		return p, true, err
 	}
 	p, err := serialx.Choose(arg, ports, store.KeyForName)
 	var several *serialx.SeveralError
 	switch {
 	case errors.As(err, &several):
-		p, err = choosePort(several.Ports)
-		return p, waited, err
+		var list strings.Builder
+		for i, p := range several.Ports {
+			fmt.Fprintf(&list, "  %d) %s  %s\n", i+1, p.OpenPath(), describe(p))
+		}
+		return p, false, fmt.Errorf("several serial ports found; pass one as an argument:\n%s", list.String())
 	case errors.Is(err, serialx.ErrNoPorts):
-		return p, waited, errors.New(noPortsHint())
+		return p, false, errors.New(noPortsHint())
 	case errors.Is(err, serialx.ErrUnplugged):
-		return p, waited, fmt.Errorf("%w; 'bauddy list' shows what is", err)
+		return p, false, fmt.Errorf("%w; 'bauddy list' shows what is", err)
 	}
-	return p, waited, err
+	return p, false, err
 }
 
-// choosePort asks which of several ports to use.
-func choosePort(ports []serialx.PortInfo) (serialx.PortInfo, error) {
-	var list strings.Builder
-	for i, p := range ports {
-		fmt.Fprintf(&list, "  %d) %s  %s\n", i+1, p.OpenPath(), describe(p))
+// remembered is what bauddy knows about a cable, for the cable screen:
+// "core-sw · 9600 last time".
+func remembered(a profile.Adapter) string {
+	var parts []string
+	if a.Name != "" {
+		parts = append(parts, a.Name)
 	}
-	if !isTerminal(os.Stdin) {
-		return serialx.PortInfo{}, fmt.Errorf("several serial ports found; pass one as an argument:\n%s", list.String())
+	if a.Baud > 0 {
+		parts = append(parts, strconv.Itoa(a.Baud)+" last time")
 	}
-	fmt.Fprint(os.Stderr, "Several serial ports found:\n"+list.String()+"Connect to which? [1]: ")
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return ports[0], nil
-	}
-	n, err := strconv.Atoi(line)
-	if err != nil || n < 1 || n > len(ports) {
-		return serialx.PortInfo{}, fmt.Errorf("not a choice: %q", line)
-	}
-	return ports[n-1], nil
+	return strings.Join(parts, " · ")
 }
 
 // saveName labels the adapter at key, refusing names that are also port

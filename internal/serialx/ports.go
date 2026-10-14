@@ -1,6 +1,7 @@
 package serialx
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -53,7 +54,7 @@ func List() ([]PortInfo, error) {
 
 	var out []PortInfo
 	for _, d := range details {
-		if skip(d.Name) {
+		if skip(d.Name) || managementPort(d.Name, d.Product) {
 			continue
 		}
 		out = append(out, PortInfo{
@@ -129,6 +130,44 @@ func skip(name string) bool {
 		}
 	}
 	return false
+}
+
+// managementPort spots Intel AMT's serial-over-LAN port: business laptops
+// have one, and it leads to the network, not to a cable, so it's left out of
+// lists; you can still name it (bauddy ttyS4). On Windows it says so in its
+// name. On Linux it's taken to be any Intel PCI serial controller: a
+// computer's own serial ports are on the LPC bus, and Intel's few PCI UARTs
+// for embedded boards are rare enough to name by hand.
+func managementPort(name, product string) bool {
+	switch runtime.GOOS {
+	case "windows":
+		return amtName(product)
+	case "linux":
+		return amtSysfs("/sys", name)
+	}
+	return false
+}
+
+// amtSysfs checks the PCI device behind a tty in sysfs at root. Since Linux
+// 6.8 the tty's device is a serial-base port, with the PCI device a level or
+// two above it, so it looks up the tree for the first device with a vendor.
+func amtSysfs(root, name string) bool {
+	dev, err := filepath.EvalSymlinks(filepath.Join(root, "class/tty", filepath.Base(name), "device"))
+	for i := 0; err == nil && i < 4; i, dev = i+1, filepath.Dir(dev) {
+		if vendor, err := os.ReadFile(filepath.Join(dev, "vendor")); err == nil {
+			class, _ := os.ReadFile(filepath.Join(dev, "class"))
+			return amtPCI(string(vendor), string(class))
+		}
+	}
+	return false
+}
+
+// amtName matches "Intel(R) Active Management Technology - SOL (COM3)".
+func amtName(product string) bool { return strings.Contains(product, "Active Management Technology") }
+
+// amtPCI matches an Intel (0x8086) PCI serial controller (class 0x0700xx).
+func amtPCI(vendor, class string) bool {
+	return strings.TrimSpace(vendor) == "0x8086" && strings.HasPrefix(strings.TrimSpace(class), "0x0700")
 }
 
 // linuxByID maps /dev/ttyUSB0 -> /dev/serial/by-id/usb-FTDI_... .
