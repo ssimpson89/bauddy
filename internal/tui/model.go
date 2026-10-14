@@ -91,6 +91,7 @@ type Model struct {
 	keys         keymap.Keymap
 	mode         mode
 	state        serialx.State
+	reconnecting bool // you asked to reconnect, so a closed port isn't an unplugged adapter
 
 	width, height int
 
@@ -333,9 +334,15 @@ func (m *Model) event(e serialx.Event) tea.Cmd {
 		if e.State == serialx.Connected {
 			m.meter.Reset() // the device may have come back at a different rate
 			cmds = append(cmds, m.logMark("reconnected"))
+			if m.reconnecting {
+				m.reconnecting = false
+				cmds = append(cmds, m.setNote("reconnected"))
+			}
 		} else {
 			cmds = append(cmds, m.logMark("disconnected"))
-			if m.paste != nil {
+			if m.paste != nil && m.reconnecting {
+				cmds = append(cmds, m.abandonPaste("you reconnected"))
+			} else if m.paste != nil {
 				cmds = append(cmds, m.abandonPaste("the adapter was unplugged"))
 			}
 		}
@@ -461,8 +468,8 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 	case keymap.ActLog:
 		return m, m.toggleLog()
 	case keymap.ActReconnect:
+		m.reconnecting = m.reconnecting || m.state == serialx.Connected // unplugged stays unplugged
 		m.sess.Reconnect()
-		return m, m.setNote("reconnecting…")
 	case keymap.ActPause:
 		return m, m.togglePause()
 	case keymap.ActQuit:

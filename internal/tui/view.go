@@ -226,13 +226,17 @@ func (m *Model) peers() []seg {
 // with the key to the commands on the right. It turns red when something
 // is wrong.
 func (m *Model) mainLine(w int) string {
-	bad := m.state != serialx.Connected || m.note.kind == noteError
+	bad := m.state != serialx.Connected && !m.reconnecting || m.note.kind == noteError
 	bg, fg, accent := cBar, cText, cAccent
 	if bad {
 		bg, fg, accent = cRedBar, cOnRed, cOnRed
 	}
 	state, stateShort := seg{"●", cGreen, false}, seg{"●", cGreen, false}
-	if m.state != serialx.Connected {
+	switch {
+	case m.state == serialx.Connected:
+	case m.reconnecting:
+		state, stateShort = seg{"○ reconnecting…", fg, true}, seg{"○ reconnecting…", fg, true}
+	default:
 		state = seg{"○ adapter unplugged, waiting…", cOnRed, true}
 		stateShort = seg{"○ unplugged", cOnRed, true}
 	}

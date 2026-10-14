@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"strings"
 	"testing"
+
+	"go.bug.st/serial"
 )
 
 func TestAssignKeys(t *testing.T) {
@@ -82,9 +84,24 @@ func TestOpenError(t *testing.T) {
 	}{
 		{&fs.PathError{Op: "open", Path: "/dev/ttyUSB9", Err: fs.ErrNotExist}, "doesn't exist; 'bauddy list'"},
 		{errors.New("boom"), "can't open /dev/ttyUSB9: boom"},
+		{portErr{serial.PortBusy, "Serial port busy"}, "in use by another program"},
+		{portErr{serial.InvalidSpeed, "Invalid port speed"}, "doesn't support that baud rate or framing"},
+		{portErr{serial.InvalidParity, "Port parity invalid or not supported"}, "doesn't support that baud rate or framing"},
+		// The settings refused after opening; the library only says so in its text.
+		{portErr{serial.InvalidSerialPort, "Invalid serial port: error configuring port: invalid argument"}, "doesn't support that baud rate or framing"},
+		{portErr{serial.InvalidSerialPort, "Invalid serial port"}, "can't open /dev/ttyUSB9: Invalid serial port"},
 	} {
 		if got := OpenError("/dev/ttyUSB9", c.err).Error(); !strings.Contains(got, c.want) {
 			t.Errorf("got %q, want it to contain %q", got, c.want)
 		}
 	}
 }
+
+// portErr stands in for *serial.PortError, whose fields can't be set here.
+type portErr struct {
+	code serial.PortErrorCode
+	msg  string
+}
+
+func (e portErr) Error() string              { return e.msg }
+func (e portErr) Code() serial.PortErrorCode { return e.code }
