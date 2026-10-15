@@ -266,6 +266,69 @@ func TestTheAIToolHasTheKeyboard(t *testing.T) {
 	}
 }
 
+// The tool gives the keyboard back at the end of each command, but text it
+// typed and didn't enter is still on the line. A stop or pause has to erase
+// it then too, not only while it still holds the lease.
+func TestStopAfterReleaseErasesUnsentText(t *testing.T) {
+	k := newConsole(t)
+	w := k.open(false)
+	ai := k.open(true)
+	_, _, release, err := ai.Lease(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ai.Write([]byte("show int"))
+	eventually(t, "typed", func() bool { return k.port(0).written() == "show int" })
+	release()
+	if err := w.StopAgent(false); err != nil {
+		t.Fatal(err)
+	}
+	want := "show int" + strings.Repeat("\b", 8)
+	eventually(t, "unsent text erased", func() bool { return k.port(0).written() == want })
+	if !w.Status().Paused {
+		t.Error("the tool should be paused")
+	}
+}
+
+// Once the user edits the line, it is theirs: a later stop must not backspace
+// the tool's old count and eat the prompt.
+func TestUserEditingForgetsTheToolsUnsentText(t *testing.T) {
+	k := newConsole(t)
+	w := k.open(false)
+	ai := k.open(true)
+	_, _, release, err := ai.Lease(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ai.Write([]byte("show"))
+	eventually(t, "typed", func() bool { return k.port(0).written() == "show" })
+	release()
+	w.Write([]byte("\b\b\b\b"))
+	eventually(t, "the user cleared it", func() bool { return k.port(0).written() == "show\b\b\b\b" })
+
+	run, why, release, err := ai.Lease(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ai.Write([]byte("z"))
+	eventually(t, "the new character", func() bool { return strings.HasSuffix(k.port(0).written(), "z") })
+	if err := w.StopAgent(false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-run.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the tool wasn't told it was stopped")
+	}
+	if why() != StopCleared {
+		t.Errorf("stopped because %q, want cleared", why())
+	}
+	if got := k.port(0).written(); got != "show\b\b\b\bz\b" {
+		t.Errorf("stop erased more than the new character: %q", got)
+	}
+	release()
+}
+
 func TestStoppingAfterEnterAndInterrupting(t *testing.T) {
 	k := newConsole(t)
 	w := k.open(false)
