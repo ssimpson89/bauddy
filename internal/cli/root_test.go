@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/ssimpson89/bauddy/internal/profile"
 	"github.com/ssimpson89/bauddy/internal/serialx"
 )
 
@@ -55,6 +56,19 @@ func TestWhenTheCableScreenAsks(t *testing.T) {
 	} {
 		if got := askForCable(c.arg, c.ports, c.terminal); got != c.want {
 			t.Errorf("%s: askForCable = %v, want %v", c.what, got, c.want)
+		}
+	}
+}
+
+func TestRememberedShowsTheDevicesName(t *testing.T) {
+	for a, want := range map[profile.Adapter]string{
+		{Baud: 9600, Device: "core-sw-01"}:              "core-sw-01 · 9600 last time",
+		{Baud: 9600, Name: "lab", Device: "core-sw-01"}: "lab · 9600 last time",
+		{Baud: 115200}:         "115200 last time",
+		{Device: "core-sw-01"}: "core-sw-01",
+	} {
+		if got := remembered(a); got != want {
+			t.Errorf("remembered(%+v) = %q, want %q", a, got, want)
 		}
 	}
 }

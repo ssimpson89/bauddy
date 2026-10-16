@@ -50,8 +50,14 @@ type Port interface {
 
 // Options configures the TUI.
 type Options struct {
-	Session     Port
-	Name        string // short label for the status line, e.g. "core-sw-01" or "ttyUSB0"
+	Session Port
+	Name    string // short label for the status line, e.g. "core-sw-01" or "ttyUSB0"
+	// Device is the name the device gave in its prompt last time (see
+	// deviceName), shown in place of Name until a name of the user's own;
+	// SaveDevice remembers a new one.
+	Device      string
+	UserNamed   bool // Name is the user's own label, so the device's doesn't replace it
+	SaveDevice  func(name string) error
 	Keymap      keymap.Keymap
 	LogPath     string // log from the start to this file or directory ("." for the current one)
 	Detect      bool   // detect the baud rate at startup
@@ -123,6 +129,8 @@ type Model struct {
 	answer     []byte      // plain text since then, across reads, until it's enough
 	awaitReply bool        // Enter was pressed at an unconfirmed rate; a noReplyMsg is due
 	offer      string      // the probe offer's opening words, e.g. "no reply at 9600."
+	device     string      // the device's name, from its prompt (see deviceName)
+	deviceSeen bool        // device came from a prompt this session, not last time
 
 	heard    bool             // any output has arrived (including what detection heard)
 	unlogged []byte           // output since the last log, written at the start of the next one
@@ -186,6 +194,7 @@ func New(opt Options) (*Model, error) {
 	}
 	m.backspaceH.Store(opt.BackspaceH)
 	m.addCR = opt.AddCR
+	m.device = opt.Device
 	m.emu.SetScrollbackSize(1) // history keeps earlier output; 0 would mean the default, 10,000 lines
 	if opt.LogPath != "" {
 		msg, err := m.startLog()
@@ -368,6 +377,8 @@ func (m *Model) event(e serialx.Event) tea.Cmd {
 		if e.State == serialx.Connected {
 			m.meter.Reset() // the device may have come back at a different rate
 			m.resetAnswer()
+			m.deviceSeen = false              // the cable may be on another device now
+			m.rememberLines(m.screen.Flush()) // so the old prompt can't stand for a new one
 			cmds = append(cmds, m.logMark("reconnected"))
 			if m.reconnecting {
 				m.reconnecting = false
@@ -693,6 +704,35 @@ func (m *Model) saveKeys() tea.Cmd {
 	}
 	if err := m.opt.SaveKeys(m.backspaceH.Load(), m.addCR); err != nil {
 		return m.setError("can't save the setting: " + err.Error())
+	}
+	return nil
+}
+
+// label is what the console is called on the status line, in the window
+// title and in log names: the user's name for it, else the device's, else
+// the port's.
+func (m *Model) label() string {
+	if m.device != "" && !m.opt.UserNamed {
+		return m.device
+	}
+	return m.opt.Name
+}
+
+// learnDevice reads the device's name from its prompt, if the cursor line
+// is one, and remembers it: a different one means the cable is on another
+// device now.
+func (m *Model) learnDevice() tea.Cmd {
+	name := deviceName(m.screen.Partial())
+	if name == "" {
+		return nil
+	}
+	was := m.device
+	m.device, m.deviceSeen = name, true
+	if name == was || m.opt.SaveDevice == nil {
+		return nil
+	}
+	if err := m.opt.SaveDevice(name); err != nil {
+		return m.setError("can't save the device's name: " + err.Error())
 	}
 	return nil
 }

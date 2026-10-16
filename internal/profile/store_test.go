@@ -40,3 +40,15 @@ func TestRememberKeys(t *testing.T) {
 		t.Errorf("got %+v; want the rate kept and both fixes on", a)
 	}
 }
+
+func TestRememberDevice(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	s, _ := Load()
+	_ = s.RememberLine("usb:1", 9600, "8N1")
+	_ = s.RememberDevice("usb:1", "core-sw-01")
+	_ = s.RememberDevice("usb:1", "edge-rtr-02") // moved to another device
+	again, _ := Load()
+	if a := again.Adapter("usb:1"); a.Baud != 9600 || a.Device != "edge-rtr-02" || a.Name != "" {
+		t.Errorf("got %+v; want the rate kept and the newest device name", a)
+	}
+}

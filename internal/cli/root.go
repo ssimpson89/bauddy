@@ -180,6 +180,8 @@ func run(arg string, o *rootOpts, version string) error {
 		Save:       save,
 		BackspaceH: saved.BackspaceH, AddCR: saved.AddCR,
 		SaveKeys: func(bs, cr bool) error { return store.RememberKeys(port.Key, bs, cr) },
+		Device:   saved.Device, UserNamed: saved.Name != "" || o.name != "",
+		SaveDevice: func(n string) error { return store.RememberDevice(port.Key, n) },
 	})
 	if err != nil {
 		return err
@@ -257,8 +259,8 @@ func askForCable(arg string, ports []serialx.PortInfo, terminal bool) bool {
 // "core-sw · 9600 last time".
 func remembered(a profile.Adapter) string {
 	var parts []string
-	if a.Name != "" {
-		parts = append(parts, a.Name)
+	if name := cmp.Or(a.Name, a.Device); name != "" {
+		parts = append(parts, name)
 	}
 	if a.Baud > 0 {
 		parts = append(parts, strconv.Itoa(a.Baud)+" last time")
