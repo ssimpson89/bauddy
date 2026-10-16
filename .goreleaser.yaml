@@ -72,13 +72,17 @@ homebrew_casks:
     description: Serial console for servers, switches and routers
     commit_msg_template: "bauddy {{ .Tag }}"
     # The binary isn't signed, so take it out of quarantine, or macOS blocks
-    # it the first time it runs.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/bauddy"]
-          end
+    # it the first time it runs. Homebrew 7's structured steps: the older
+    # postflight block is deprecated there. chdir "." is the staged path.
+    # When GoReleaser 2.19 ships, use its hooks.post.install_steps instead:
+    # custom_block lands above version, which brew style flags.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-d", "com.apple.quarantine", "bauddy"], chdir: ".",
+                                must_succeed: false, print_stderr: false
+        end
+      end
   - <<: *cask
     name: bauddy@beta
     description: Serial console for servers, switches and routers (betas included)
