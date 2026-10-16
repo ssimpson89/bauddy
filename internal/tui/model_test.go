@@ -349,3 +349,64 @@ func TestTheLineFeedFixAppliesToReplay(t *testing.T) {
 		t.Errorf("cursor at %+v after a replayed \"one\\ntwo\\n\"; want the start of line 3", got)
 	}
 }
+
+func TestNamingTheDeviceFromItsPrompt(t *testing.T) {
+	m := unconfirmedModel(9600)
+	m.opt.Name = "ttyUSB0"
+	var saved []string
+	m.opt.SaveDevice = func(n string) error { saved = append(saved, n); return nil }
+	bar := func() string { return ansi.Strip(m.mainLine(100)) }
+
+	m.event(serialx.Event{Data: []byte("\r\ncore-sw-01#")})
+	if m.label() != "core-sw-01" || !strings.HasPrefix(bar(), " core-sw-01  ") || m.note.text != "" {
+		t.Errorf("first name: label %q, bar %q, note %q; want it learned quietly", m.label(), bar(), m.note.text)
+	}
+	m.event(serialx.Event{Data: []byte("\r\ncore-sw-01(config-if)#")})
+	if len(saved) != 1 {
+		t.Errorf("saved %v; config mode is the same device, so once", saved)
+	}
+	if got := windowTitle(m.label()); got != "core-sw-01 · bauddy" {
+		t.Errorf("title %q", got)
+	}
+
+	// The cable comes back on another device: last time's name is shown dim
+	// with a ?, until a prompt says otherwise.
+	m.event(serialx.Event{State: serialx.Disconnected})
+	m.event(serialx.Event{State: serialx.Connected})
+	if !strings.HasPrefix(bar(), " core-sw-01?  ") {
+		t.Errorf("after a reconnect: bar %q; want last time's name, unconfirmed", bar())
+	}
+	// Output with no new prompt (a bell, a cursor control) mustn't confirm
+	// the old name from the line left over from before.
+	m.event(serialx.Event{Data: []byte("\a\x1b[?25h")})
+	if !strings.HasPrefix(bar(), " core-sw-01?  ") {
+		t.Errorf("after a bell: bar %q; want the old name still unconfirmed", bar())
+	}
+	m.event(serialx.Event{Data: []byte("edge-rtr-02>")}) // and a prompt with no newline before it
+	if m.label() != "edge-rtr-02" || m.note.text != "" || saved[len(saved)-1] != "edge-rtr-02" {
+		t.Errorf("another device: label %q, note %q, saved %v", m.label(), m.note.text, saved)
+	}
+
+	// Defaults, typed commands and bootloaders aren't names.
+	for _, line := range []string{"\r\nSwitch#", "\r\nedge-rtr-02>show ver", "\r\nrommon 1 >"} {
+		m.event(serialx.Event{Data: []byte(line)})
+	}
+	if m.label() != "edge-rtr-02" {
+		t.Errorf("label %q; want it kept through non-names", m.label())
+	}
+}
+
+func TestTheUsersOwnNameWins(t *testing.T) {
+	m := unconfirmedModel(9600)
+	m.opt.Name, m.opt.UserNamed = "lab-console", true
+	m.event(serialx.Event{Data: []byte("\r\ncore-sw-01#")})
+	if m.label() != "lab-console" || m.note.text != "" {
+		t.Errorf("label %q, note %q; want the user's name kept", m.label(), m.note.text)
+	}
+}
+
+func TestWindowTitleDropsControlCharacters(t *testing.T) {
+	if got := windowTitle("core\x1b]0;evil\x07-sw"); got != "core]0;evil-sw · bauddy" {
+		t.Errorf("got %q", got)
+	}
+}

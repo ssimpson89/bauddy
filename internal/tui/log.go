@@ -28,17 +28,18 @@ func (m *Model) output(b []byte) tea.Cmd {
 	m.noteAnswer(b)
 	m.show(b)
 	m.rememberLines(m.screen.Feed(b))
+	learned := m.learnDevice()
 	if m.log == nil {
 		m.unlogged = append(m.unlogged, b...)
 		if over := len(m.unlogged) - unloggedMax; over > 0 {
 			m.unlogged = m.unlogged[over:]
 		}
-		return nil
+		return learned
 	}
 	if err := m.log.Write(b); err != nil {
-		return m.logFailed(err)
+		return tea.Batch(learned, m.logFailed(err))
 	}
-	return nil
+	return learned
 }
 
 // show puts device bytes on the screen, with a CR before each bare LF when
@@ -57,12 +58,12 @@ func (m *Model) show(b []byte) {
 // for the status line.
 func (m *Model) startLog() (string, error) {
 	now := time.Now()
-	path, err := logfile.Resolve(m.opt.LogPath, m.opt.Name, now)
+	path, err := logfile.Resolve(m.opt.LogPath, m.label(), now)
 	if err != nil {
 		return "", err
 	}
 	header := fmt.Sprintf("bauddy log: %s (%s) at %s, started %s",
-		m.opt.Name, m.sess.Path(), m.lineSettings(), now.Format("2006-01-02 15:04:05"))
+		m.label(), m.sess.Path(), m.lineSettings(), now.Format("2006-01-02 15:04:05"))
 	l, err := logfile.Open(path, header)
 	if err != nil {
 		return "", err

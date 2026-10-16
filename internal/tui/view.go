@@ -124,6 +124,7 @@ func (m *Model) View() tea.View {
 
 	v := tea.NewView(body + "\n" + m.statusLine())
 	v.AltScreen = true
+	v.WindowTitle = windowTitle(m.label())
 	if m.mode == modeConsole { // no cursor over overlays
 		pos := m.emu.CursorPosition()
 		v.Cursor = tea.NewCursor(pos.X, pos.Y)
@@ -247,7 +248,10 @@ func (m *Model) mainLine(w int) string {
 	}
 
 	sp := []seg{{" ", nil, false}}
-	name := []seg{{m.opt.Name + "  ", cBright, false}}
+	name := []seg{{m.label() + "  ", cBright, false}}
+	if m.device != "" && !m.deviceSeen && !m.opt.UserNamed {
+		name[0] = seg{m.device + "?  ", cDim, false} // the device it was on last time; not seen yet
+	}
 	if bad {
 		name[0].fg = cOnRed
 	}
@@ -487,4 +491,17 @@ func (m *Model) baudBox() string {
 	sb.WriteString("\n" + dimStyle.Render("Not sure? Press d to detect it.") + "\n")
 	sb.WriteString(dimStyle.Render("Other rates: bauddy -b N"))
 	return boxStyle.Render(sb.String())
+}
+
+// windowTitle names the terminal window or tab after the console, name
+// first so a narrow tab keeps it. The name may come from the device, so
+// anything but printable text is dropped.
+func windowTitle(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return -1
+		}
+		return r
+	}, name)
+	return name + " · bauddy"
 }
