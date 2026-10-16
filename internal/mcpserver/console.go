@@ -266,7 +266,8 @@ func (c *console) notes() []string {
 		n = append(n, "Output looks garbled, so the baud rate is probably wrong: connect again with detect, or with a baud.")
 	}
 	if paste.AtLogin(c.screen.Partial()) {
-		n = append(n, "The device is asking for a login. Ask the user to log in in their bauddy window, or to give you "+
+		n = append(n, "The device is asking for a login. Ask the user to log in in bauddy on this cable (if it isn't open, "+
+			"running bauddy joins this console, except on Windows), or to give you "+
 			"credentials if they want you to. Don't guess: failed logins can lock the account.")
 	}
 	if c.logErr != nil {
