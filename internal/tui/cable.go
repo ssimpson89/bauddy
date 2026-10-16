@@ -53,6 +53,7 @@ type cableModel struct {
 	inUse         func(serialx.PortInfo) bool
 	list          func() ([]serialx.PortInfo, error)
 	width, height int
+	light         bool // the terminal has a light background
 
 	rows        []serialx.PortInfo // in the order they appeared, so rows don't jump
 	cursor      int
@@ -96,7 +97,9 @@ func (m *cableModel) checkOpen(ports []serialx.PortInfo) {
 
 type cableTick struct{}
 
-func (m *cableModel) Init() tea.Cmd { return m.tick() }
+func (m *cableModel) Init() tea.Cmd {
+	return tea.Batch(m.tick(), tea.RequestBackgroundColor) // the box's colours suit the terminal
+}
 
 func (m *cableModel) tick() tea.Cmd {
 	return tea.Tick(cablePoll, func(time.Time) tea.Msg { return cableTick{} })
@@ -104,6 +107,8 @@ func (m *cableModel) tick() tea.Cmd {
 
 func (m *cableModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		m.light = !msg.IsDark()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tea.KeyPressMsg:
@@ -217,33 +222,64 @@ func (m *cableModel) View() tea.View {
 		return tea.NewView("")
 	}
 	h := max(1, m.height-1)
-	var body []string
-	if m.listing {
-		body = m.listLines(h)
-	} else {
-		for _, l := range strings.Split(m.hint, "\n") {
-			body = append(body, " "+l) // the same margin as the list
+	boxStyle, keyStyle, dimStyle := overlayStyle(m.light)
+	// In the box if it fits, wrapped to the window; else the lines alone.
+	inner, innerW := h-boxStyle.GetVerticalFrameSize(), m.width-boxStyle.GetHorizontalFrameSize()
+	var body string
+	if innerW >= 20 && inner >= 3 {
+		box := boxStyle.Render(strings.Join(m.screenLines(inner, innerW, keyStyle, dimStyle), "\n"))
+		if lipgloss.Height(box) <= h {
+			body = overlay(m.width, h, box)
 		}
 	}
-	for i := range body {
-		body[i] = ansi.Truncate(body[i], m.width, "") // so the bar stays on screen
+	if body == "" {
+		lines := m.screenLines(h, 0, keyStyle, dimStyle)
+		for i := range lines {
+			lines[i] = ansi.Truncate(" "+lines[i], m.width, "")
+		}
+		for len(lines) < h {
+			lines = append(lines, "")
+		}
+		body = strings.Join(lines[:h], "\n")
 	}
-	for len(body) < h {
-		body = append(body, "")
-	}
-	v := tea.NewView(strings.Join(body[:h], "\n") + "\n" + m.bar(m.width))
+	v := tea.NewView(body + "\n" + m.bar(m.width))
 	v.AltScreen = true
 	return v
 }
 
-// listLines is the list of cables in h lines: as many rows as fit, the
-// cursor's among them, with the question and the tip when there's room.
-func (m *cableModel) listLines(h int) []string {
-	head := []string{" Which cable?", ""}
-	foot := []string{"", " Not sure which? Unplug yours and plug it back in, and it's marked."}
-	if len(m.rows) == 1 {
-		foot[1] = " Plug your cable back in, or press enter to use this one."
+// screenLines is what the screen says, in h lines of width w (0: any): the
+// list of cables, or the hint while waiting, wrapped to w.
+func (m *cableModel) screenLines(h, w int, keyStyle, dimStyle lipgloss.Style) []string {
+	if m.listing {
+		return m.listLines(h, w, keyStyle, dimStyle)
 	}
+	var lines []string
+	for i, l := range strings.Split(m.hint, "\n") {
+		st := dimStyle
+		if i == 0 {
+			st = lipgloss.NewStyle().Bold(true) // the instruction; the rest are fallbacks
+		}
+		if w > 0 {
+			st = st.Width(min(w, lipgloss.Width(l)))
+		}
+		lines = append(lines, strings.Split(st.Render(l), "\n")...)
+	}
+	return lines
+}
+
+// listLines is the list of cables in h lines of width w (0: any): as many
+// rows as fit, the cursor's among them, with the question and the tip when
+// there's room. Rows are cut to w; the tip wraps.
+func (m *cableModel) listLines(h, w int, keyStyle, dimStyle lipgloss.Style) []string {
+	tip := "Not sure which? Unplug yours and plug it back in, and it's marked."
+	if len(m.rows) == 1 {
+		tip = "Plug your cable back in, or press enter to use this one."
+	}
+	if w > 0 {
+		dimStyle = dimStyle.Width(min(w, lipgloss.Width(tip)))
+	}
+	head := []string{keyStyle.Render("Which cable?"), ""}
+	foot := append([]string{""}, strings.Split(dimStyle.Render(tip), "\n")...) // a wrapped tip is several lines
 	if h < len(head)+len(foot)+1 {
 		head, foot = nil, nil
 	}
@@ -267,7 +303,7 @@ func (m *cableModel) listLines(h int) []string {
 		if i < 9 { // only 1-9 can be pressed
 			num = fmt.Sprintf("%d ", i+1)
 		}
-		line := " " + mark + num + " " + pad(cableName(r), names) + "  " + pad(filepath.Base(r.Path), ports)
+		line := mark + num + " " + pad(cableName(r), names) + "  " + pad(filepath.Base(r.Path), ports)
 		if i == m.cursor {
 			line = lipgloss.NewStyle().Bold(true).Render(line)
 		}
@@ -277,12 +313,15 @@ func (m *cableModel) listLines(h int) []string {
 			line += "  " + lipgloss.NewStyle().Background(cAccent).Foreground(cOnAccent).Render(" just plugged in ")
 		}
 		if m.open[r.Path] {
-			line += "  open in bauddy"
+			line += dimStyle.UnsetWidth().Render("  open in bauddy")
 		}
 		if m.known != nil {
 			if s := m.known(r); s != "" {
-				line += "  " + s
+				line += dimStyle.UnsetWidth().Render("  " + s)
 			}
+		}
+		if w > 0 {
+			line = ansi.Truncate(line, w, "")
 		}
 		lines = append(lines, line)
 	}
