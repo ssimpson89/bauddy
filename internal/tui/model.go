@@ -8,6 +8,7 @@ import (
 	"io"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -61,6 +62,11 @@ type Options struct {
 	// Save is called with a rate and framing that worked, to remember them
 	// for this adapter.
 	Save func(baud int, framing serialx.Framing) error
+
+	// BackspaceH and AddCR start the two keyboard and screen fixes (x and n)
+	// on; SaveKeys remembers them for this adapter when they change.
+	BackspaceH, AddCR bool
+	SaveKeys          func(backspaceH, addCR bool) error
 }
 
 // note is the message shown after the baud rate.
@@ -110,10 +116,13 @@ type Model struct {
 	// key is then a SysRq command) while its replies are dropped, so it
 	// seems silent. So until then only Enter goes out.
 	answered   bool
-	rateAt     int    // the rate when answered was last reset
-	answer     []byte // plain text since then, across reads, until it's enough
-	awaitReply bool   // Enter was pressed at an unconfirmed rate; a noReplyMsg is due
-	offer      string // the probe offer's opening words, e.g. "no reply at 9600."
+	backspaceH atomic.Bool // Backspace sends ^H (x); the key pump reads it
+	addCR      bool        // show each bare line feed as a new line (n)
+	lastCR     bool        // the last byte shown was a CR, for addCR
+	rateAt     int         // the rate when answered was last reset
+	answer     []byte      // plain text since then, across reads, until it's enough
+	awaitReply bool        // Enter was pressed at an unconfirmed rate; a noReplyMsg is due
+	offer      string      // the probe offer's opening words, e.g. "no reply at 9600."
 
 	heard    bool             // any output has arrived (including what detection heard)
 	unlogged []byte           // output since the last log, written at the start of the next one
@@ -175,6 +184,8 @@ func New(opt Options) (*Model, error) {
 	if opt.Recheck {
 		m.recheckUntil = time.Now().Add(recheckWithin)
 	}
+	m.backspaceH.Store(opt.BackspaceH)
+	m.addCR = opt.AddCR
 	m.emu.SetScrollbackSize(1) // history keeps earlier output; 0 would mean the default, 10,000 lines
 	if opt.LogPath != "" {
 		msg, err := m.startLog()
@@ -192,6 +203,9 @@ func New(opt Options) (*Model, error) {
 		for {
 			n, err := m.emu.Read(buf)
 			if n > 0 {
+				if m.backspaceH.Load() {
+					backspaceToH(buf[:n])
+				}
 				_, _ = m.sess.Write(buf[:n])
 			}
 			if err != nil {
@@ -332,8 +346,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) event(e serialx.Event) tea.Cmd {
-	if e.Replay { // output from before this window joined: for the screen and history only
-		_, _ = m.emu.Write(e.Data)
+	if e.Replay && len(e.Data) > 0 { // output from before this window joined: for the screen and history only
+		m.show(e.Data)
 		m.rememberLines(m.screen.Feed(e.Data))
 		m.heard = true // but not answered: it may be from before a rate change
 		return nil
@@ -551,6 +565,15 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		m.sess.Reconnect()
 	case keymap.ActPause:
 		return m, m.togglePause()
+	case keymap.ActBackspace:
+		on := !m.backspaceH.Load()
+		m.backspaceH.Store(on)
+		say := map[bool]string{true: "Backspace sends ^H", false: "Backspace sends DEL"}[on]
+		return m, tea.Batch(m.done(say, say), m.saveKeys())
+	case keymap.ActAddCR:
+		m.addCR = !m.addCR
+		say := map[bool]string{true: "starting each line at the left", false: "showing line feeds as they come"}[m.addCR]
+		return m, tea.Batch(m.done(say, say), m.saveKeys())
 	case keymap.ActQuit:
 		return m, tea.Quit
 	}
@@ -663,6 +686,41 @@ func (m *Model) lineSettings() string {
 }
 
 // save remembers the current rate and framing for this adapter.
+// saveKeys remembers the Backspace and line feed fixes for this adapter.
+func (m *Model) saveKeys() tea.Cmd {
+	if m.opt.SaveKeys == nil {
+		return nil
+	}
+	if err := m.opt.SaveKeys(m.backspaceH.Load(), m.addCR); err != nil {
+		return m.setError("can't save the setting: " + err.Error())
+	}
+	return nil
+}
+
+// backspaceToH turns DEL, what Backspace sends, into ^H, in place.
+func backspaceToH(b []byte) {
+	for i, c := range b {
+		if c == 0x7f {
+			b[i] = 0x08
+		}
+	}
+}
+
+// withCR puts a carriage return before each line feed that hasn't one, so
+// output from a device that ends lines with LF alone doesn't staircase. cr
+// says whether the last byte shown was a CR, across reads.
+func withCR(b []byte, cr *bool) []byte {
+	out := make([]byte, 0, len(b)+8)
+	for _, c := range b {
+		if c == '\n' && !*cr {
+			out = append(out, '\r')
+		}
+		out = append(out, c)
+		*cr = c == '\r'
+	}
+	return out
+}
+
 func (m *Model) save() tea.Cmd {
 	if m.opt.Save == nil {
 		return nil

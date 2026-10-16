@@ -177,7 +177,9 @@ func run(arg string, o *rootOpts, version string) error {
 	m, err := tui.New(tui.Options{
 		Session: sess, Name: name, Keymap: keymap.New(esc), LogPath: o.log, Version: version,
 		Detect: source == "default", Recheck: source == "saved", KeepFraming: o.framing != "",
-		Save: save,
+		Save:       save,
+		BackspaceH: saved.BackspaceH, AddCR: saved.AddCR,
+		SaveKeys: func(bs, cr bool) error { return store.RememberKeys(port.Key, bs, cr) },
 	})
 	if err != nil {
 		return err

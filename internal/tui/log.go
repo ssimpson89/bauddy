@@ -26,7 +26,7 @@ func (m *Model) output(b []byte) tea.Cmd {
 	}
 	m.heard, m.quiet = true, false
 	m.noteAnswer(b)
-	_, _ = m.emu.Write(b)
+	m.show(b)
 	m.rememberLines(m.screen.Feed(b))
 	if m.log == nil {
 		m.unlogged = append(m.unlogged, b...)
@@ -39,6 +39,18 @@ func (m *Model) output(b []byte) tea.Cmd {
 		return m.logFailed(err)
 	}
 	return nil
+}
+
+// show puts device bytes on the screen, with a CR before each bare LF when
+// the line feed fix (n) is on. Only the screen: logs and history keep what
+// came.
+func (m *Model) show(b []byte) {
+	if m.addCR {
+		_, _ = m.emu.Write(withCR(b, &m.lastCR))
+		return
+	}
+	_, _ = m.emu.Write(b)
+	m.lastCR = b[len(b)-1] == '\r'
 }
 
 // startLog opens a log, writes the history into it, and returns a message

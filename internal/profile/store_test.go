@@ -25,3 +25,18 @@ func TestRememberBaudMergesConcurrentWriters(t *testing.T) {
 		t.Errorf("usb:B = %d, want 115200", d.Baud)
 	}
 }
+
+func TestRememberKeys(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	s, _ := Load()
+	if err := s.RememberLine("usb:1", 9600, "8N1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RememberKeys("usb:1", true, true); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := Load()
+	if a := again.Adapter("usb:1"); a.Baud != 9600 || !a.BackspaceH || !a.AddCR {
+		t.Errorf("got %+v; want the rate kept and both fixes on", a)
+	}
+}

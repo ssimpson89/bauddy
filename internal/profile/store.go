@@ -17,6 +17,9 @@ type Adapter struct {
 	Baud    int    `json:"baud"`
 	Framing string `json:"framing,omitempty"` // e.g. "7E1"; empty means 8N1
 	Name    string `json:"name,omitempty"`    // user label, e.g. "core-sw-01"
+	// Rarely needed fixes for the keyboard and screen, off by default.
+	BackspaceH bool `json:"backspaceH,omitempty"` // Backspace sends ^H, not DEL
+	AddCR      bool `json:"addCR,omitempty"`      // show each bare line feed as a new line
 }
 
 type file struct {
@@ -65,6 +68,11 @@ func (s *Store) RememberLine(key string, baud int, framing string) error {
 		framing = ""
 	}
 	return s.update(key, func(a *Adapter) { a.Baud, a.Framing = baud, framing })
+}
+
+// RememberKeys saves the Backspace and line feed fixes for key.
+func (s *Store) RememberKeys(key string, backspaceH, addCR bool) error {
+	return s.update(key, func(a *Adapter) { a.BackspaceH, a.AddCR = backspaceH, addCR })
 }
 
 // RememberName labels the adapter at key and saves. The name is taken from
