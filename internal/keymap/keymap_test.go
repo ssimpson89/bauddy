@@ -1,6 +1,9 @@
 package keymap
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestKeysAreUnique(t *testing.T) {
 	for _, esc := range []string{DefaultEscapeKey, "ctrl+t"} {
@@ -71,5 +74,16 @@ func TestKeysThatSendUseThePort(t *testing.T) {
 		if b.Sends && !b.Action.UsesPort() {
 			t.Errorf("%s sends to the device but UsesPort is false", b.Key)
 		}
+	}
+}
+
+func TestFixesHaveTheirOwnGroup(t *testing.T) {
+	g := New(DefaultEscapeKey).Groups()
+	var keys []string
+	for _, b := range g[2].Bindings {
+		keys = append(keys, b.Key)
+	}
+	if g[2].Title != "If something looks wrong" || fmt.Sprint(keys) != "[x n]" {
+		t.Errorf("group %q %v; want the fixes apart", g[2].Title, keys)
 	}
 }

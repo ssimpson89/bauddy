@@ -113,7 +113,7 @@ func (m *Model) View() tea.View {
 	var body string
 	switch m.mode {
 	case modeHelp:
-		body = overlay(m.width, paneH, m.helpBox())
+		body = m.helpView(paneH)
 	case modeBaud:
 		body = overlay(m.width, paneH, m.baudBox())
 	case modeHistory:
@@ -454,23 +454,91 @@ func barRight(note string, quit, back barKey, quitFull, backFull bool) []seg {
 	return out
 }
 
-func (m *Model) helpBox() string {
-	boxStyle, keyStyle, dimStyle := m.overlayStyles()
-	var sb strings.Builder
-	sb.WriteString(keyStyle.Render("bauddy keys") + dimStyle.Render("  "+m.opt.Version) + "\n\n")
-	sb.WriteString(dimStyle.Render(m.keys.Intro()) + "\n")
-	if agent := m.agent(); agent != "" { // first, so a short window doesn't crop it
-		sb.WriteString("\n" + agent + dimStyle.Render(" sees what the console prints from when it joined") + "\n")
-		sb.WriteString("  " + keyStyle.Render(fmt.Sprintf("%-8s", "esc")) + " stop it while it's working (its unsent command is cleared)\n")
-		sb.WriteString("  " + keyStyle.Render(fmt.Sprintf("%-8s", "ctrl+c")) + " stop it and interrupt the device\n")
+// helpView is help in its box, centred in h rows, or if the box doesn't
+// fit, its lines alone, with where to find the rest if they're cut.
+func (m *Model) helpView(h int) string {
+	if box := m.helpBox(); lipgloss.Height(box) <= h && lipgloss.Width(box) <= m.width {
+		return overlay(m.width, h, box)
 	}
-	for _, g := range m.keys.Groups() {
-		sb.WriteString("\n" + g.Title + "\n")
+	_, _, dimStyle := m.overlayStyles()
+	lines := m.helpLines()
+	cut := len(lines) > h
+	for _, l := range lines {
+		cut = cut || 1+lipgloss.Width(l) > m.width
+	}
+	if cut { // too short or too narrow
+		lines = append(lines[:min(len(lines), h-1)], dimStyle.Render("More: quit and run bauddy keys"))
+	}
+	for i := range lines {
+		lines[i] = ansi.Truncate(" "+lines[i], m.width, "")
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// helpBox is help, sized to fit an 80×24 window.
+func (m *Model) helpBox() string {
+	boxStyle, _, _ := m.overlayStyles()
+	return boxStyle.Padding(0, 2).Render(strings.Join(m.helpLines(), "\n"))
+}
+
+// helpLines is what help says. It leaves out ?, q and esc, which the
+// status line always shows, and p unless an AI tool is connected.
+func (m *Model) helpLines() []string {
+	_, keyStyle, dimStyle := m.overlayStyles()
+	lines := []string{keyStyle.Render("bauddy keys") + dimStyle.Render("  "+m.opt.Version), dimStyle.Render(m.keys.Intro())}
+	agent := m.agent()
+	if agent != "" {
+		lines = append(lines, agent+dimStyle.Render(" is connected: esc stops it, ctrl+c also interrupts the device"))
+	}
+	for i, g := range m.keys.Groups() {
+		lines = append(lines, "")
+		if i > 0 { // the first group is just the keys
+			lines = append(lines, g.Title)
+		}
+		var keys []keymap.Binding
 		for _, b := range g.Bindings {
-			sb.WriteString("  " + keyStyle.Render(fmt.Sprintf("%-8s", b.Key)) + " " + b.Help + "\n")
+			switch b.Action {
+			case keymap.ActHelp, keymap.ActQuit, keymap.ActLeaveCommand:
+				continue
+			case keymap.ActPause:
+				if agent == "" {
+					continue
+				}
+			}
+			keys = append(keys, b)
+		}
+		helpW := 0 // so the [on]s and [off]s line up
+		for _, b := range keys {
+			helpW = max(helpW, lipgloss.Width(b.Help))
+		}
+		for _, b := range keys {
+			line := "  " + keyStyle.Render(fmt.Sprintf("%-8s", b.Key)) + " " + b.Help
+			if s := m.keyState(b.Action); s != "" {
+				line += strings.Repeat(" ", helpW-lipgloss.Width(b.Help)) + "  " + dimStyle.Render(s)
+			}
+			lines = append(lines, line)
 		}
 	}
-	return boxStyle.Render(strings.TrimRight(sb.String(), "\n"))
+	return lines
+}
+
+// keyState is a toggle's state for help, e.g. "[on]", or "" for other keys.
+func (m *Model) keyState(a keymap.Action) string {
+	onOff := map[bool]string{true: "[on]", false: "[off]"}
+	switch a {
+	case keymap.ActBackspace:
+		return onOff[m.backspaceH.Load()]
+	case keymap.ActAddCR:
+		return onOff[m.addCR]
+	case keymap.ActPause:
+		if m.shared != nil && m.shared.Status().Paused {
+			return "[paused]"
+		}
+	}
+	return ""
 }
 
 func (m *Model) baudBox() string {
