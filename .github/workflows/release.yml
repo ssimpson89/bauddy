@@ -20,6 +20,16 @@ jobs:
       - run: go test -race ./...
       # Betas update the plain bauddy cask only until there's a stable release.
       - run: if git tag -l 'v*' | grep -qv -- -; then echo HAS_STABLE=1 >> "$GITHUB_ENV"; fi
+      # Optional: sign the RPMs, if the key is set.
+      - env:
+          RPM_SIGNING_KEY: ${{ secrets.RPM_SIGNING_KEY }}
+          RPM_SIGNING_PASSPHRASE: ${{ secrets.RPM_SIGNING_PASSPHRASE }}
+        run: |
+          if [ -n "$RPM_SIGNING_KEY" ] && [ -n "$RPM_SIGNING_PASSPHRASE" ]; then
+            umask 077
+            printf '%s\n' "$RPM_SIGNING_KEY" > "$RUNNER_TEMP/rpm-signing-key.asc"
+            echo "RPM_SIGNING_KEY_FILE=$RUNNER_TEMP/rpm-signing-key.asc" >> "$GITHUB_ENV"
+          fi
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
@@ -29,6 +39,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Optional: updates the Homebrew tap (ssimpson89/homebrew-tap).
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          NFPM_PASSPHRASE: ${{ secrets.RPM_SIGNING_PASSPHRASE }}
           # Optional: macOS signing and notarization (paid Apple Developer account).
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
           MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}

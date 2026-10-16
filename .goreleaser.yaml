@@ -44,6 +44,39 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
     files: [LICENSE, README.md]
 
+# Linux packages: an .rpm and a .deb for each Linux build, on the release
+# page. RPMs are signed when the RPM_SIGNING_KEY and RPM_SIGNING_PASSPHRASE
+# secrets exist, and built unsigned otherwise. apt checks a signed
+# repository index, not the .deb itself, so .debs aren't signed.
+nfpms:
+  - ids: [bauddy]
+    package_name: bauddy
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: Stephen Simpson
+    homepage: https://github.com/ssimpson89/bauddy
+    maintainer: Stephen Simpson <ssimpson89@users.noreply.github.com>
+    description: |-
+      Serial console for servers, switches and routers
+      Finds the port and baud rate, keeps the keys on screen, and can let an
+      AI agent use the console (bauddy mcp) while you watch.
+    license: MIT
+    section: utils
+    mtime: "{{ .CommitDate }}" # file dates (nfpm still dates the RPM signature 1970; rpm accepts it)
+    formats: [rpm, deb]
+    bindir: /usr/bin
+    contents:
+      - src: LICENSE
+        dst: /usr/share/licenses/bauddy/LICENSE
+        packager: rpm
+      - src: LICENSE
+        dst: /usr/share/doc/bauddy/copyright
+        packager: deb
+      - src: README.md
+        dst: /usr/share/doc/bauddy/README.md
+    rpm:
+      signature:
+        key_file: '{{ if index .Env "RPM_SIGNING_KEY_FILE" }}{{ .Env.RPM_SIGNING_KEY_FILE }}{{ end }}'
+
 checksum:
   name_template: checksums.txt
 
