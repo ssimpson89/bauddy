@@ -285,8 +285,13 @@ func (h *hub) write(p *peer, b []byte) {
 
 // trackUser counts what the user has typed and not entered, so an AI tool
 // doesn't type onto it. Arrow keys and the like arrive as escape sequences,
-// which aren't text. Call with mu held.
+// which aren't text. The user taking the line also ends the AI tool's claim
+// on it: a later stop must not backspace a count from text the user has
+// since edited. Call with mu held.
 func (h *hub) trackUser(b []byte) {
+	if len(b) > 0 {
+		h.agentLine = typing{}
+	}
 	for i := 0; i < len(b); i++ {
 		switch c := b[i]; {
 		case c == '\r' || c == '\n' || c == 0x03 || c == 0x15: // Enter, ctrl+c, ctrl+u
@@ -429,9 +434,15 @@ func (h *hub) windowOp(p *peer, m msg) error {
 		return nil
 	}
 	note, reason := h.agent.name+" paused", StopPaused
-	if h.lease {
-		note, reason = h.revoke(m.Interrupt)
-		h.queue(h.agent, msg{T: tStopped, Text: reason})
+	// Text typed and not entered stays tracked after the tool gives the
+	// keyboard back, so a stop or pause still erases it. Once the user has
+	// edited the line, that tracking is gone (see trackUser).
+	if h.lease || h.agentLine.chars > 0 || h.agentLine.ctrl {
+		leased := h.lease
+		note, reason = h.revoke(m.Interrupt && leased)
+		if leased { // a stop for a command already finished must not cancel the next one
+			h.queue(h.agent, msg{T: tStopped, Text: reason})
+		}
 	}
 	if m.Interrupt {
 		_, _ = h.port.Write([]byte{0x03}) // the user's ctrl+c, after the tool's last byte
