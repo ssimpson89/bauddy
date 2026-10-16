@@ -10,14 +10,14 @@ import (
 	"github.com/ssimpson89/bauddy/internal/share"
 )
 
-// agentConsole is a shared console with an AI tool connected.
-type agentConsole struct{}
+// fakeShared is a shared console in a given state.
+type fakeShared share.Status
 
-func (agentConsole) Status() share.Status           { return share.Status{Connected: true, Agent: "claude"} }
-func (agentConsole) Notes() <-chan share.Note       { return nil }
-func (agentConsole) KeyPressed()                    {}
-func (agentConsole) StopAgent(interrupt bool) error { return nil }
-func (agentConsole) TogglePause() error             { return nil }
+func (f fakeShared) Status() share.Status         { return share.Status(f) }
+func (fakeShared) Notes() <-chan share.Note       { return nil }
+func (fakeShared) KeyPressed()                    {}
+func (fakeShared) StopAgent(interrupt bool) error { return nil }
+func (fakeShared) TogglePause() error             { return nil }
 
 // Copilot's find: in 80×24 the help box was cropped, losing the fixes at
 // the bottom. Help must fit there whole, with or without an AI tool, and
@@ -29,7 +29,7 @@ func TestHelpFitsTheWindow(t *testing.T) {
 		want  []string
 	}{
 		{80, 24, false, []string{"╭", "bauddy keys", "Detect the baud rate", "Send BREAK", "won't erase  [off]", "further right      [off]", "╰"}},
-		{80, 24, true, []string{"╭", "claude is connected", "Pause or resume the AI tool", "won't erase  [off]", "further right      [off]", "╰"}},
+		{80, 24, true, []string{"╭", "claude: esc stops it · ctrl+c stops it and interrupts the device", "Pause or resume the AI tool", "won't erase  [off]", "further right      [off]", "╰"}},
 		{60, 12, false, []string{"bauddy keys", "More: quit and run bauddy keys"}}, // too short
 		{60, 24, false, []string{"bauddy keys", "More: quit and run bauddy keys"}}, // too narrow, though every line fits
 	} {
@@ -37,7 +37,7 @@ func TestHelpFitsTheWindow(t *testing.T) {
 			m := unconfirmedModel(9600)
 			m.width, m.height, m.mode = c.w, c.h, modeHelp
 			if c.agent {
-				m.shared = agentConsole{}
+				m.shared = fakeShared{Connected: true, Agent: "claude"}
 			}
 			s := ansi.Strip(m.View().Content)
 			lines := strings.Split(s, "\n")

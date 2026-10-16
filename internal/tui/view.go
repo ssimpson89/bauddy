@@ -199,10 +199,12 @@ func (m *Model) agentLine(w int) string {
 	if time.Now().Before(m.ignoredUntil) {
 		lead = append(lead, seg{" · keys ignored", cOnViolet, false})
 	}
-	keys := []seg{{"esc", cOnViolet, true}, {" stop it  ", cOnViolet, false}, {"ctrl+c", cOnViolet, true}, {" stop and interrupt ", cOnViolet, false}}
+	keys := []seg{{"esc", cOnViolet, true}, {" stop it   ", cOnViolet, false}, {"ctrl+c", cOnViolet, true}, {" stop + interrupt device ", cOnViolet, false}}
+	mid := []seg{{"esc", cOnViolet, true}, {" stop  ", cOnViolet, false}, {"ctrl+c", cOnViolet, true}, {" stop + interrupt ", cOnViolet, false}}
 	short := []seg{{"esc", cOnViolet, true}, {" stop ", cOnViolet, false}}
 	working := []seg{{" working", cOnViolet, true}}
-	return fitLine(cViolet, w, []layout{{lead, keys}, {lead[:1], keys}, {lead, short}, {lead[:1], short}, {working, short}})
+	// Both keys outlast the tool's name: what each one stops is the point.
+	return fitLine(cViolet, w, []layout{{lead, keys}, {lead[:1], keys}, {lead[:1], mid}, {working, mid}, {lead[:1], short}, {working, short}})
 }
 
 // peers says who else is on a shared console, e.g. "+Claude Code paused".
@@ -218,12 +220,8 @@ func (m *Model) peers() []seg {
 			out[0].text += "s"
 		}
 	}
-	if s.Agent != "" {
-		text := "  +" + s.Agent
-		if s.Paused {
-			text += " paused"
-		}
-		out = append(out, seg{text, cVioletText, false})
+	if s.Agent != "" && !s.Paused { // paused: the note says so, with the key that resumes
+		out = append(out, seg{"  +" + s.Agent, cVioletText, false})
 	}
 	return out
 }
@@ -295,13 +293,24 @@ func (m *Model) mainLine(w int) string {
 	keys := []seg{{m.keys.Escape, accent, true}, {" keys ", fg, false}}
 	short := []seg{{shortKey(m.keys.Escape), accent, true}, {" keys ", fg, false}}
 
+	// A paused AI tool can't type until you resume it, so how to resume
+	// stays on the line: notes, the rest and even the keys hint go first.
+	var paused, pausedShort []seg
+	if m.aiPaused() {
+		who := cmp.Or(m.agent(), "AI tool")
+		paused = []seg{{"  " + who + " paused · ", cVioletText, false}, {m.keys.Escape + " p", cVioletText, true}, {" resumes", cVioletText, false}}
+		pausedShort = []seg{{"  paused · ", cVioletText, false}, {shortKey(m.keys.Escape) + " p", cVioletText, true}}
+	}
+
 	peers := m.peers()
 	return fitLine(bg, w, []layout{ // widest first; each step drops or shortens something
-		{slices.Concat(sp, name, []seg{baud, state}, peers, logging, note), keys},
-		{slices.Concat(sp, name, []seg{baud, state}, peers, logging, note), short},
-		{slices.Concat(sp, []seg{baud, state}, peers, logging, note), short},
-		{slices.Concat(sp, []seg{baud, stateShort}, peers, logging, noteShort), short},
-		{slices.Concat(sp, []seg{baud, stateShort}, logging, noteShort), short},
+		{slices.Concat(sp, name, []seg{baud, state}, paused, peers, logging, note), keys},
+		{slices.Concat(sp, name, []seg{baud, state}, paused, peers, logging, note), short},
+		{slices.Concat(sp, []seg{baud, state}, paused, peers, logging, note), short},
+		{slices.Concat(sp, []seg{baud, stateShort}, pausedShort, peers, logging, noteShort), short},
+		{slices.Concat(sp, []seg{baud, stateShort}, pausedShort, logging, noteShort), short},
+		{slices.Concat(sp, []seg{baud, stateShort}, pausedShort), short},
+		{slices.Concat(sp, []seg{baud, stateShort}, pausedShort), nil},
 		{slices.Concat(sp, []seg{baud, stateShort}), short},
 	})
 }
@@ -342,14 +351,15 @@ func (m *Model) commandLine(w int) string {
 			if m.log != nil {
 				k.label = "stop log"
 			}
-		case keymap.ActPause: // only while an AI tool is on the console
+		case keymap.ActPause: // while an AI tool is on the console, or paused
 			agent := m.agent()
-			if agent == "" {
+			switch {
+			case m.aiPaused():
+				k.label, k.keep = "resume "+cmp.Or(agent, "AI"), keymap.KeepAlways-1
+			case agent != "":
+				k.label = "pause " + agent
+			default:
 				continue
-			}
-			k.label = "pause " + agent
-			if m.shared.Status().Paused {
-				k.label = "resume " + agent
 			}
 		case keymap.ActReconnect: // unplugged: reconnect is what you need now
 			if m.state != serialx.Connected {
@@ -491,7 +501,7 @@ func (m *Model) helpLines() []string {
 	lines := []string{keyStyle.Render("bauddy keys") + dimStyle.Render("  "+m.opt.Version), dimStyle.Render(m.keys.Intro())}
 	agent := m.agent()
 	if agent != "" {
-		lines = append(lines, agent+dimStyle.Render(" is connected: esc stops it, ctrl+c also interrupts the device"))
+		lines = append(lines, agent+dimStyle.Render(": esc stops it · ctrl+c stops it and interrupts the device"))
 	}
 	for i, g := range m.keys.Groups() {
 		lines = append(lines, "")
@@ -504,7 +514,7 @@ func (m *Model) helpLines() []string {
 			case keymap.ActHelp, keymap.ActQuit, keymap.ActLeaveCommand:
 				continue
 			case keymap.ActPause:
-				if agent == "" {
+				if agent == "" && !m.aiPaused() {
 					continue
 				}
 			}

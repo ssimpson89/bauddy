@@ -881,3 +881,44 @@ func TestClosingTheHolderRemovesItsLockFile(t *testing.T) {
 	c.Close()
 	eventually(t, "the lock file gone", func() bool { _, err := os.Stat(lockPath); return errors.Is(err, os.ErrNotExist) })
 }
+
+// The pause outlives the AI tool, so a tool that reconnects straight after
+// being stopped can't type. Resuming then has to work with no tool on, or
+// the next one is refused with no way out.
+func TestResumeAfterThePausedToolLeft(t *testing.T) {
+	k := newConsole(t)
+	w := k.open(false)
+	ai := k.open(true)
+	eventually(t, "the tool joined", func() bool { return w.Status().Agent != "" })
+	if err := w.StopAgent(false); err != nil { // between commands: just pauses
+		t.Fatal(err)
+	}
+	eventually(t, "paused", func() bool { return w.Status().Paused })
+	ai.Close()
+	eventually(t, "the tool left", func() bool { return w.Status().Agent == "" })
+	if !w.Status().Paused {
+		t.Fatal("the pause should outlive the tool")
+	}
+
+	again := k.open(true)
+	if _, _, _, err := again.Lease(context.Background()); !errors.Is(err, ErrPaused) {
+		t.Errorf("a tool joining while paused should be refused, got %v", err)
+	}
+	again.Close()
+	eventually(t, "that tool left", func() bool { return w.Status().Agent == "" })
+
+	if err := w.TogglePause(); err != nil {
+		t.Fatalf("resuming with no tool on: %v", err)
+	}
+	eventually(t, "resumed", func() bool { return !w.Status().Paused })
+	next := k.open(true)
+	if _, _, release, err := next.Lease(context.Background()); err != nil {
+		t.Errorf("after resuming, a new tool should be able to type: %v", err)
+	} else {
+		release()
+	}
+	if err := w.TogglePause(); err != nil { // with a tool on, p pauses it again
+		t.Fatal(err)
+	}
+	eventually(t, "paused again", func() bool { return w.Status().Paused })
+}
