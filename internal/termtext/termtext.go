@@ -13,7 +13,8 @@ import (
 type Cleaner struct {
 	line  []byte
 	state int
-	cr    bool // saw \r; a following \n ends the line, anything else overwrites it
+	cr    bool   // saw \r: a \n ends the line, visible text starts it again (a redraw), nothing else counts
+	csi   []byte // the parameters of the escape sequence being read, for erase-line
 }
 
 const (
@@ -38,7 +39,7 @@ func (c *Cleaner) Feed(b []byte) []byte {
 		case sEsc:
 			switch ch {
 			case '[':
-				c.state = sCSI
+				c.state, c.csi = sCSI, c.csi[:0]
 			case ']', 'P', '_', '^', 'X':
 				c.state = sStr
 			default:
@@ -55,8 +56,16 @@ func (c *Cleaner) Feed(b []byte) []byte {
 			}
 			continue
 		case sCSI:
-			if ch >= 0x40 && ch <= 0x7e {
+			switch {
+			case ch == 'K': // erase in line: all of it (2), or from the cursor, which a \r put at the start
+				if p := string(c.csi); p == "2" || c.cr && (p == "" || p == "0") {
+					c.line = c.line[:0]
+				}
 				c.state = sText
+			case ch >= 0x40 && ch <= 0x7e:
+				c.state = sText
+			case len(c.csi) < 16:
+				c.csi = append(c.csi, ch)
 			}
 			continue
 		case sStr:
@@ -72,10 +81,14 @@ func (c *Cleaner) Feed(b []byte) []byte {
 			continue
 		}
 
-		if c.cr && ch != '\n' {
-			c.line = c.line[:0] // bare \r: the line is being redrawn
+		// Only what shows decides a \r: more \r, colour codes and bells don't.
+		visible := ch == '\t' || ch >= 0x20 && ch != 0x7f
+		if c.cr && visible {
+			c.line = c.line[:0] // \r, then text: the line is being redrawn
 		}
-		c.cr = false
+		if visible || ch == '\n' {
+			c.cr = false
+		}
 		switch {
 		case ch == 0x1b:
 			c.state = sEsc
