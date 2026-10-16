@@ -164,14 +164,18 @@ bauddy isn't open, the agent opens the port itself; open bauddy later and it
 joins.
 
 - While it's working, the bottom line turns violet:
-  `Claude Code is working   esc stop it  ctrl+c stop and interrupt`.
+  `Claude Code is working   esc stop it   ctrl+c stop + interrupt device`.
   Your other keys, except `ctrl+]`, are ignored until it's done, so they
   can't land in the middle of its command.
-- **esc** stops it before its next keystroke, and erases a command it hadn't
-  entered. Anything it already sent to the device has been sent.
-  **ctrl+c** stops it and interrupts the device.
-- Stopping it also pauses it: it can still read, but can't type until you
-  press `ctrl+]` then `p`. Between its commands, the same keys pause it.
+- **esc** stops it. A command it typed but hadn't entered is erased; one it
+  had entered keeps running on the device.
+  **ctrl+c** stops it and also sends ctrl+c to the device, as if you had
+  typed it, which interrupts whatever is running there.
+- Either way it's then paused: it can still read, but can't type until you
+  press `ctrl+]` then `p`, as the bottom line says
+  (`Claude Code paused · ctrl+] p resumes`). The pause stays if it
+  disconnects, so one that reconnects can't type either. Between its
+  commands, `ctrl+]` then `p` pauses it.
 - Claude Code may also ask you before each command, depending on its
   settings. Don't rely on that.
 - Not on Windows yet.

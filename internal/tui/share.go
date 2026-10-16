@@ -65,6 +65,10 @@ func (m *Model) detectingAnywhere() bool {
 	return m.detecting || m.shared != nil && m.shared.Status().Detecting
 }
 
+// aiPaused reports whether the user has paused AI tools on this console. It
+// can outlast the tool, so a tool that reconnects can't type until resumed.
+func (m *Model) aiPaused() bool { return m.shared != nil && m.shared.Status().Paused }
+
 // agentWorking reports whether an AI tool has the keyboard.
 func (m *Model) agentWorking() bool { return m.shared != nil && m.shared.Status().Working }
 
@@ -89,7 +93,7 @@ func (m *Model) agentKey(key string) (bool, tea.Cmd) {
 }
 
 func (m *Model) togglePause() tea.Cmd {
-	if m.agent() == "" {
+	if m.agent() == "" && !m.aiPaused() { // paused with none on: resuming must still work
 		return m.setNote("no AI tool is using this console")
 	}
 	s := m.shared

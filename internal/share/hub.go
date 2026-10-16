@@ -183,7 +183,9 @@ func (h *hub) serve(conn net.Conn) {
 		return
 	}
 	h.peers[p] = struct{}{}
-	h.paused = h.paused || hello.Paused // the user's pause outlives the process that held the port
+	if hello.Hub != h.id { // the user's pause outlives the process that held the port; on this hub, h.paused is the truth
+		h.paused = h.paused || hello.Paused
+	}
 	if p.agent {
 		h.agent = p
 		h.note(p.name + " joined")
@@ -380,15 +382,15 @@ func (h *hub) revoke(interrupt bool) (note, reason string) {
 	h.lease, h.agentLine = false, typing{}
 	switch {
 	case interrupt:
-		return "paused · interrupted", StopInterrupted
+		return "paused · ctrl+c sent to the device", StopInterrupted
 	case t.chars > 0 && !t.ctrl && !pager.Match(h.ring) && !paste.AtLogin(h.cursorText()):
 		// Backspace (0x08) is understood almost everywhere; ctrl+u isn't.
 		_, _ = h.port.Write(bytes.Repeat([]byte{'\b'}, t.chars))
-		return "paused · unsent command cleared", StopCleared
+		return "paused · unsent command erased", StopCleared
 	case t.chars > 0:
-		return "paused · its text is still on the line", StopLeft
+		return "paused · its text is left on the line", StopLeft
 	case t.entered:
-		return "paused · still running · ctrl+c interrupts", StopRunning
+		return "paused · its command is still running", StopRunning
 	}
 	return "paused", StopPaused
 }
@@ -425,13 +427,17 @@ func (h *hub) windowOp(p *peer, m msg) error {
 			_, _ = h.port.Write([]byte{0x03}) // it left first; the user's ctrl+c still goes through
 		}
 		return nil
-	case h.agent == nil:
-		return errors.New("no AI tool is using this console")
-	case m.Op == opPause && h.paused:
+	case m.Op == opPause && h.paused: // even with no AI tool on: the pause outlives it, so it must be undoable
 		h.paused = false
-		h.note(h.agent.name + " resumed")
+		name := "AI tool"
+		if h.agent != nil {
+			name = h.agent.name
+		}
+		h.note(name + " resumed")
 		h.broadcastState()
 		return nil
+	case h.agent == nil:
+		return errors.New("no AI tool is using this console")
 	}
 	note, reason := h.agent.name+" paused", StopPaused
 	// Text typed and not entered stays tracked after the tool gives the
