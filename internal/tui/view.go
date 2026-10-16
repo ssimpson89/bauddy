@@ -45,9 +45,13 @@ var (
 
 // overlayStyles returns the box, key and dim styles for the help and baud
 // overlays, suited to the terminal's background.
-func (m *Model) overlayStyles() (box, key, dim lipgloss.Style) {
+func (m *Model) overlayStyles() (box, key, dim lipgloss.Style) { return overlayStyle(m.light) }
+
+// overlayStyle is the centred box bauddy draws its overlays and the cable
+// screen in, with key and dim styles to suit a light or dark terminal.
+func overlayStyle(light bool) (box, key, dim lipgloss.Style) {
 	accent, faint := color.Color(cAccent), color.Color(cDim)
-	if m.light {
+	if light {
 		accent, faint = cAccentOnLight, cDimOnLight
 	}
 	box = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 2)

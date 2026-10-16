@@ -37,7 +37,7 @@ func newCables(t *testing.T, start ...serialx.PortInfo) *cables {
 		},
 		func(p serialx.PortInfo) bool { return c.openPaths[p.Path] },
 		func() ([]serialx.PortInfo, error) { return c.found, c.err })
-	c.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	c.Update(tea.WindowSizeMsg{Width: 80, Height: 16})
 	return c
 }
 
@@ -71,11 +71,11 @@ func digit(r rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: r, Text: strin
 func TestWaitingForACable(t *testing.T) {
 	c := newCables(t)
 	s := c.screen()
-	if !strings.HasPrefix(s, " Plug in your console cable") || !strings.Contains(s, "○ waiting for a USB console cable…") || !strings.Contains(s, "q quit") {
+	if !strings.Contains(s, "│  Plug in your console cable") || !strings.Contains(s, "╭") || !strings.Contains(s, "○ waiting for a USB console cable…") || !strings.Contains(s, "q quit") {
 		t.Errorf("waiting screen:\n%s", s)
 	}
-	if n := strings.Count(s, "\n"); n != 9 {
-		t.Errorf("%d line breaks, want 9 for a 10-line window", n)
+	if n := strings.Count(s, "\n"); n != 15 {
+		t.Errorf("%d line breaks, want 15 for a 16-line window", n)
 	}
 	for _, k := range []tea.KeyPressMsg{digit('x'), enter, digit('1'), {Code: ']', Mod: tea.ModCtrl}} {
 		if c.press(k) != nil {
@@ -235,9 +235,10 @@ func TestCableScreenFits(t *testing.T) {
 		}
 	}
 
-	// 12 cables in a 10-line window: 9 lines above the bar, 4 of them the
-	// question and the tip, leaves 5 rows.
+	// 12 cables in a 14-line window: 13 lines above the bar, 4 the box's
+	// edges and padding, 4 the question and the tip, leaves 5 rows.
 	c := newCables(t, many...)
+	c.Update(tea.WindowSizeMsg{Width: 80, Height: 14})
 	for range 11 {
 		c.press(down)
 	}
@@ -282,7 +283,7 @@ func TestCablesOpenInAnotherBauddy(t *testing.T) {
 		func(serialx.PortInfo) string { return "" },
 		func(p serialx.PortInfo) bool { return c.openPaths[p.Path] },
 		func() ([]serialx.PortInfo, error) { return c.found, nil })
-	c.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	c.Update(tea.WindowSizeMsg{Width: 80, Height: 16})
 	s := c.screen()
 	if !strings.Contains(s, "▸ 1  FT232R USB UART  ttyUSB1") || !strings.Contains(s, "2  FT232R USB UART  ttyUSB0  open in bauddy") {
 		t.Errorf("want the free cable first under the cursor, the open one last and tagged:\n%s", s)
@@ -313,5 +314,45 @@ func TestWaitingThenListingPutsOpenCablesLast(t *testing.T) {
 	c.look(usbPort(0), usbPort(1))
 	if !c.listing || c.rows[0].Path != "/dev/ttyUSB1" || c.cursor != 0 {
 		t.Errorf("listing %v, rows %s %s, cursor %d: want the free ttyUSB1 first, under the cursor", c.listing, c.rows[0].Path, c.rows[1].Path, c.cursor)
+	}
+}
+
+// In a narrow window the box still fits: rows are cut, but the words wrap.
+func TestNarrowBoxWrapsTheWords(t *testing.T) {
+	c := newCables(t, usbPort(0), usbPort(1))
+	c.Update(tea.WindowSizeMsg{Width: 50, Height: 18})
+	s := c.screen()
+	if !strings.Contains(s, "╭") || !strings.Contains(s, "it's marked.") {
+		t.Errorf("want the box, with the tip wrapped rather than cut:\n%s", s)
+	}
+	w := newCables(t)
+	w.Update(tea.WindowSizeMsg{Width: 50, Height: 18})
+	if s := w.screen(); !strings.Contains(s, "╭") || !strings.Contains(s, "connect to") {
+		t.Errorf("want the waiting box with its words wrapped:\n%s", s)
+	}
+}
+
+// The box is drawn whole or not at all: never cropped, in any window.
+func TestTheBoxIsWholeOrNotThere(t *testing.T) {
+	hint := "Plug in your console cable and bauddy will connect to it.\n\nAlready plugged in? The cable may need a driver from its maker.\n\nKnow the port? Press q, then run: bauddy /dev/cu.usbserial-1410"
+	var many []serialx.PortInfo
+	for i := range 12 {
+		many = append(many, usbPort(i))
+	}
+	for _, start := range [][]serialx.PortInfo{nil, many} {
+		for _, size := range [][2]int{{120, 30}, {80, 24}, {50, 10}, {50, 14}, {25, 10}, {30, 6}} {
+			c := newCables(t, start...)
+			c.hint = hint
+			c.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			s := c.screen()
+			if strings.Contains(s, "╭") != strings.Contains(s, "╰") {
+				t.Errorf("%d cables at %dx%d: a cropped box:\n%s", len(start), size[0], size[1], s)
+			}
+			if !strings.Contains(s, "╭") && len(start) > 0 {
+				if n := strings.Count(s, "FT232R"); n < size[1]-1-4 {
+					t.Errorf("%d cables at %dx%d with no box: %d rows shown; want the whole height used:\n%s", len(start), size[0], size[1], n, s)
+				}
+			}
+		}
 	}
 }
