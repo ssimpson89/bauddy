@@ -95,6 +95,8 @@ func TestSysfsPorts(t *testing.T) {
 	// driver, so only type tells a real UART from a phantom.
 	f.tty("ttyS2", "platform/serial8250/serial8250:0/serial8250:0.2", "serial-base", "0")
 	f.tty("ttyS3", "pnp0/00:02/00:02:0/00:02:0.0", "serial-base", "4")
+	f.tty("ttyS4", "pnp0/00:03/00:03:0/00:03:0.0", "pnp", "4")
+	f.write(filepath.Join(f.sys, "class/tty/console/active"), "tty0 ttyS4 ttyUSB1") // console=ttyS4, console=ttyUSB1
 
 	got, err := sysfsPorts(f.sys, f.dev)
 	if err != nil {
@@ -115,7 +117,7 @@ func TestSysfsPorts(t *testing.T) {
 	}
 	slices.Sort(names)
 	if want := []string{"rfcomm0", "ttyACM0", "ttyS0", "ttyS3", "ttyUSB0", "ttyUSB1", "ttyXRUSB0"}; !slices.Equal(names, want) {
-		t.Errorf("ports %v, want %v (no ttyS1 without a UART, no tty0, none without a driver)", names, want)
+		t.Errorf("ports %v, want %v (no ttyS1 without a UART, no tty0, none without a driver, not the kernel's ttyS4 console)", names, want)
 	}
 	for n, want := range map[string]string{
 		"ttyUSB0":   "0403:6001 A9OY16TW FT232R USB UART",
