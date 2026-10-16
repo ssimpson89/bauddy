@@ -279,3 +279,26 @@ func TestAtLogin(t *testing.T) {
 		}
 	}
 }
+
+// On a FreeBSD shell, Enter echoes as \r\r\n. Read as a redraw, that blanked
+// the line, so a command that printed nothing waited out promptWait.
+func TestNoOutputAfterDoubleCR(t *testing.T) {
+	t.Parallel()
+	rx := make(chan []byte, 64)
+	echo := func(b []byte) error { // a shell that echoes, and after Enter prints only its prompt
+		for _, ch := range b {
+			if ch == '\r' {
+				rx <- []byte("\r\r\nroot@fw:~ # ")
+			} else {
+				rx <- []byte{ch}
+			}
+		}
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	p := &Pacer{Write: echo, Rx: rx, Baud: 115200, Prompt: "root@fw:~ # "}
+	if err := p.Run(ctx, Lines("true\ngrep zzz /etc/hosts\n"), func(int) {}); err != nil {
+		t.Fatalf("err = %v, want both lines run with the prompt seen after each", err)
+	}
+}
