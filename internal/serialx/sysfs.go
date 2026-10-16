@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"go.bug.st/serial/enumerator"
@@ -25,6 +26,8 @@ func sysfsPorts(sys, dev string) ([]*enumerator.PortDetails, error) {
 	if err != nil {
 		return nil, err
 	}
+	active, _ := os.ReadFile(filepath.Join(sys, "class/tty/console/active"))
+	consoles := strings.Fields(string(active)) // where the kernel writes its messages
 	var out []*enumerator.PortDetails
 	for _, e := range entries {
 		tty := filepath.Join(sys, "class/tty", e.Name())
@@ -43,6 +46,13 @@ func sysfsPorts(sys, dev string) ([]*enumerator.PortDetails, error) {
 		d := &enumerator.PortDetails{Name: path}
 		if device, err := filepath.EvalSymlinks(filepath.Join(tty, "device")); err == nil {
 			usbDetails(device, d)
+		}
+		if !d.IsUSB && slices.Contains(consoles, e.Name()) {
+			// This computer's own console, such as ttyS0 with console=ttyS0:
+			// it leads back here, and its login prompt would take half of what
+			// comes in. You can still name it (bauddy ttyS0). A USB cable is
+			// listed even so: it's the one you plugged in.
+			continue
 		}
 		out = append(out, d)
 	}
