@@ -24,3 +24,14 @@ func TestScore(t *testing.T) {
 		})
 	}
 }
+
+func TestAnswered(t *testing.T) {
+	for b, want := range map[string]bool{
+		"$": true, "\r\nUser:": true, "用户:": true, "\a": true, "\x1b[0m#": true,
+		"": false, "\x00": false, "$\xff": false, "\xe0\xe0": false, "\x1c": false,
+	} {
+		if got := Answered([]byte(b)); got != want {
+			t.Errorf("Answered(%q) = %v, want %v", b, got, want)
+		}
+	}
+}

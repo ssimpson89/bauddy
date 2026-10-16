@@ -21,7 +21,10 @@ tested on real hardware or on Windows, so expect rough edges and please
   which is yours? Unplug it and plug it back in, and bauddy points to it.
 - **Finds the baud rate.** It listens to the device and picks the rate that
   makes sense, then remembers it for that cable. It won't send anything to
-  the device without asking first.
+  the device without asking first. If a remembered rate gets no reply, it
+  says so and offers to detect again; until the device answers, only Enter
+  goes out, since keys at the wrong rate can reach a Linux console as a
+  BREAK.
 - **Shows the keys.** There's one key to remember, `ctrl+]`, and it's always
   on the bottom line. Press it to see the rest.
 - **Tells you when something's wrong.** If the output turns to garbage, the

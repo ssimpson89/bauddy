@@ -28,6 +28,7 @@ type simPort struct {
 	baud   int
 	breaks int
 	detect error // what Detect returns; nil finds the device's rate
+	mute   bool  // drop everything the device sends, as at a rate slower than the device's
 }
 
 func newSimPort(t *testing.T, d *simdev.Device) *simPort {
@@ -39,7 +40,12 @@ func newSimPort(t *testing.T, d *simdev.Device) *simPort {
 		for {
 			select {
 			case b := <-d.Out():
-				p.events <- serialx.Event{Data: b}
+				p.mu.Lock()
+				mute := p.mute
+				p.mu.Unlock()
+				if !mute {
+					p.events <- serialx.Event{Data: b}
+				}
 			case <-ctx.Done():
 				return
 			}
@@ -82,6 +88,7 @@ type harness struct {
 	cs      *mcp.ClientSession
 	logDir  string
 	asked   []string // the approval questions the user saw
+	silent  bool     // don't press Enter on open: the device hasn't answered yet
 }
 
 // start connects a client to a server. With answer set, the client can ask
@@ -112,6 +119,9 @@ func startVersion(t *testing.T, d *simdev.Device, opt Options, answer, version s
 		h.port.mu.Lock()
 		h.port.baud = baud
 		h.port.mu.Unlock()
+		if !h.silent {
+			_ = h.port.d.Write([]byte("\r")) // the device has answered, as a checked line would have
+		}
 		return h.port, nil
 	}
 	t.Cleanup(s.disconnect)
@@ -170,6 +180,7 @@ func (h *harness) ran() string { return strings.Join(h.port.d.Applied(), "|") }
 
 func TestConnectDetectsAndRunsCommands(t *testing.T) {
 	h := start(t, &simdev.Device{Baud: 9600, FIFO: 16}, Options{}, "")
+	h.silent = true
 	out := h.connect()
 	if !strings.Contains(out, "Connected to ttySIM0 (/dev/ttySIM0) at 9600 baud, detected.") || !strings.Contains(out, "Logging to "+h.logDir) {
 		t.Errorf("connect said:\n%s", out)
@@ -180,6 +191,7 @@ func TestConnectDetectsAndRunsCommands(t *testing.T) {
 	if len(h.opened) != 1 || h.opened[0] != defaultBaud {
 		t.Errorf("opened at %v, want once at %d before detecting", h.opened, defaultBaud)
 	}
+	// Detection heard the device at this rate, so typing is allowed.
 
 	out, isErr := h.call("send_command", map[string]any{"command": "terminal length 0\nshow clock"})
 	if isErr {
@@ -565,6 +577,7 @@ func TestLoginPromptIsPointedOut(t *testing.T) {
 
 func TestConnectReportsQuietDevice(t *testing.T) {
 	h := start(t, &simdev.Device{Baud: 9600, FIFO: 16}, Options{}, "")
+	h.silent = true
 	h.port.detect = serialx.ErrNoSignal
 	out := h.connect()
 	if !strings.Contains(out, "at 115200 baud, the default, since nothing was heard") || !strings.Contains(out, "send_keys with key enter") {
@@ -736,6 +749,14 @@ func TestJoiningAConsoleOpenInBauddy(t *testing.T) {
 		t.Errorf("the window should show the AI tool by its client's name, got %q", got)
 	}
 
+	// What it sees on joining may be from before a rate change: only Enter
+	// until the device answers now.
+	if out, isErr := h.call("send_command", map[string]any{"command": "show clock"}); !isErr || !strings.Contains(out, "nothing was sent") {
+		t.Errorf("send_command on joining, before the device answered:\n%s", out)
+	}
+	if out, isErr := h.call("send_keys", map[string]any{"key": "enter"}); isErr || !strings.Contains(out, "Switch#") {
+		t.Fatalf("Enter on joining:\n%s", out)
+	}
 	if out, isErr := h.call("send_command", map[string]any{"command": "show clock"}); isErr || !strings.Contains(out, "output of show clock") {
 		t.Fatalf("send_command through the shared console:\n%s", out)
 	}
@@ -784,5 +805,33 @@ func TestReadOnlyOffersNoWayToType(t *testing.T) {
 	}
 	if out := h.connect(); !strings.Contains(out, "Connected to") || strings.Contains(out, "send_") {
 		t.Errorf("read-only can still connect, and isn't told to type: %s", out)
+	}
+}
+
+// At a rate slower than the device's, its replies are dropped and every key
+// reaches it as a BREAK: on a Linux console, the next key is then a SysRq
+// command. So until the device answers, the agent may only press Enter, and
+// is told when even that gets no reply.
+func TestNoTypingUntilTheDeviceAnswers(t *testing.T) {
+	h := start(t, &simdev.Device{Baud: 9600, FIFO: 16}, Options{}, "")
+	h.silent = true
+	h.port.mu.Lock()
+	h.port.mute = true
+	h.port.mu.Unlock()
+	h.call("connect", map[string]any{"baud": 9600})
+	for _, try := range []map[string]any{{"text": "admin"}, {"text": "b"}, {"text": "admin", "key": "enter"}} {
+		if out, isErr := h.call("send_keys", try); !isErr || !strings.Contains(out, "nothing was sent") {
+			t.Errorf("send_keys %v before the device answered:\n%s", try, out)
+		}
+	}
+	if out, isErr := h.call("send_command", map[string]any{"command": "show version"}); !isErr || !strings.Contains(out, "nothing was sent") {
+		t.Errorf("send_command before the device answered:\n%s", out)
+	}
+	out, isErr := h.call("send_keys", map[string]any{"key": "enter", "wait_seconds": 0.5})
+	if isErr || !strings.Contains(out, "No reply to Enter at 9600 baud") || !strings.Contains(out, "connect again with detect") {
+		t.Errorf("Enter with no reply:\n%s", out)
+	}
+	if got := h.ran(); got != "" {
+		t.Errorf("the device ran %q; want nothing but Enter sent", got)
 	}
 }

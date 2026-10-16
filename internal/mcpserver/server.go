@@ -424,6 +424,11 @@ func (s *server) connect(ctx context.Context, req *mcp.CallToolRequest, in conne
 		case err == nil:
 			c.detected(r)
 			how = "detected"
+			if r.StrayLogin {
+				how += "; it's asking for a password, probably because a stray character from probing a faster " +
+					"rate was taken as a username. Don't press Enter (that would be a login attempt): tell the user, " +
+					"who can press Enter to start the login again"
+			}
 		case errors.Is(err, serialx.ErrNoSignal):
 			how = "the default, since nothing was heard while detecting"
 		default:
@@ -447,7 +452,8 @@ func (s *server) connect(ctx context.Context, req *mcp.CallToolRequest, in conne
 	var quiet string
 	if strings.HasPrefix(out, "(no new output)") {
 		quiet = "The device has printed nothing yet. send_keys with key enter usually brings up the prompt " +
-			"(at a boot menu, Enter starts the default entry). If the reply is garbled, connect again with detect."
+			"(at a boot menu, Enter starts the default entry). Only Enter is sent until the device answers; if it " +
+			"gets no reply, or the reply is garbled, the rate is wrong: connect again with detect."
 		if s.opt.ReadOnly {
 			quiet = "The device has printed nothing yet. Ask the user to press Enter in bauddy on this cable " +
 				"(if it isn't open, running bauddy joins this console, except on Windows), then read_output can wait for the prompt. " +
@@ -491,6 +497,9 @@ func (s *server) sendCommand(ctx context.Context, req *mcp.CallToolRequest, in c
 	command := strings.TrimRight(in.Command, "\r\n")
 	if strings.TrimSpace(command) == "" {
 		return nil, nil, errors.New("no command given; to press Enter, use send_keys with key enter")
+	}
+	if !c.answered() {
+		return nil, nil, c.unconfirmed()
 	}
 	at := c.line()
 	answering := at.confirming() && s.answersAt != at.prompts
@@ -641,6 +650,10 @@ func (s *server) sendKeys(ctx context.Context, req *mcp.CallToolRequest, in keys
 	if err != nil {
 		return nil, nil, err
 	}
+	justEnter := in.Text == "" && in.Key == "enter" // Enter is no SysRq command, so it may check the line
+	if !justEnter && !c.answered() {
+		return nil, nil, c.unconfirmed()
+	}
 
 	at := c.line()
 	typed := line{cursor: at.cursor + in.Text, prompt: at.prompt}
@@ -687,6 +700,10 @@ func (s *server) sendKeys(ctx context.Context, req *mcp.CallToolRequest, in keys
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
+	}
+	if justEnter && !c.answered() {
+		return text(false, c.output(), fmt.Sprintf("No reply to Enter at %s: the baud rate is probably wrong. "+
+			"Don't type anything else; connect again with detect, or ask the user.", c.settings())), nil, nil
 	}
 	return text(false, c.output()), nil, nil
 }

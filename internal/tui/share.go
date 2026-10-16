@@ -39,6 +39,7 @@ func (m *Model) waitShare() tea.Cmd {
 }
 
 func (m *Model) shareNote(n share.Note) tea.Cmd {
+	m.rateChanged() // another window may have set the rate: a round trip still needs a new answer
 	switch {
 	case n.Mark: // the AI tool ran a command: mark it in history and the log
 		m.rememberLines([]byte("── " + n.Text + " ──\n"))

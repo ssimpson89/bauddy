@@ -625,7 +625,7 @@ func (c *Client) Detect(cfg serialx.DetectConfig) (serialx.Result, error) {
 		return serialx.Result{}, errors.New("detection gave no result")
 	}
 	f, _ := serialx.ParseFraming(reply.Result.Framing)
-	return serialx.Result{Baud: reply.Result.Baud, Framing: f}, nil
+	return serialx.Result{Baud: reply.Result.Baud, Framing: f, StrayLogin: reply.Result.StrayLogin}, nil
 }
 
 // Close leaves the console; if this process holds it, the port closes and

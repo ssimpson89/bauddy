@@ -25,6 +25,7 @@ func (m *Model) output(b []byte) tea.Cmd {
 		return nil
 	}
 	m.heard, m.quiet = true, false
+	m.noteAnswer(b)
 	_, _ = m.emu.Write(b)
 	m.rememberLines(m.screen.Feed(b))
 	if m.log == nil {

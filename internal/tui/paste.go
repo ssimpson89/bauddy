@@ -53,6 +53,10 @@ func (m *Model) receivePaste(text string) tea.Cmd {
 	if m.detectingAnywhere() {
 		return m.setNote("detecting the baud rate; paste again when it's done")
 	}
+	if !m.confirmed() {
+		// At a wrong rate the paste would go out as BREAKs and garbage.
+		return m.setNote(unconfirmedNote)
+	}
 	lines := paste.Lines(text)
 	switch why := paste.Risky(lines); {
 	case len(lines) == 0:
@@ -87,6 +91,9 @@ func (m *Model) confirmKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.mode, m.confirm = modeConsole, nil
+	if !m.confirmed() { // the rate changed, or the port reconnected, while it asked
+		return m, m.setNote(unconfirmedNote)
+	}
 	if len(c.lines) == 1 && !strings.HasSuffix(c.lines[0], "\r") {
 		m.emu.Paste(c.lines[0]) // no Enter: nothing to pace
 		return m, nil

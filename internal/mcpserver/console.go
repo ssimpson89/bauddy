@@ -56,6 +56,8 @@ type console struct {
 	prompt    string   // the last cursor line that looked like a prompt, with nothing typed
 	prompts   int      // how many times a prompt has appeared
 	connected bool
+	heardAt   int    // the rate the device last answered at in plain text; 0: not since connecting
+	answer    []byte // plain text towards an answer, across reads
 	meter     serialx.GarbleMeter
 	changed   chan struct{} // closed and replaced whenever something arrives
 	rx        chan []byte   // a copy of the output for the paste pacer, while a command runs
@@ -85,9 +87,13 @@ func (c *console) drain() {
 	for e := range c.port.Events() {
 		c.mu.Lock()
 		c.feed(e.Data)
+		if !e.Replay { // output from before the agent joined may be from another rate
+			c.noteAnswer(e.Data)
+		}
 		if up := e.State == serialx.Connected; up != c.connected {
 			c.connected = up
 			c.meter.Reset() // the device may come back at a different rate
+			c.heardAt, c.answer = 0, nil
 			msg := "disconnected"
 			if up {
 				msg = "reconnected"
@@ -180,7 +186,42 @@ func (c *console) detected(r serialx.Result) {
 	c.meter.Reset()
 	c.mark("detected " + serialx.LineSettings(r.Baud, r.Framing))
 	c.feed(r.Heard)
+	c.heardAt, c.answer = c.port.Baud(), nil // it heard the device at this rate
 	c.notify()
+}
+
+// noteAnswer counts b towards an answer. Two bytes of plain text in a row,
+// across reads, are one; garbage starts the count again: at a rate slower
+// than the device's, some still gets through. Call with mu held.
+func (c *console) noteAnswer(b []byte) {
+	if len(b) == 0 {
+		return
+	}
+	if !serialx.Answered(b) {
+		c.answer = nil
+		return
+	}
+	if c.answer = append(c.answer, b...); len(c.answer) >= 2 {
+		c.heardAt, c.answer = c.port.Baud(), nil
+	}
+}
+
+// answered says whether the device has answered in plain text at the
+// current rate. Until it has, the rate is unconfirmed: at a rate slower
+// than the device's, every byte reaches it as a BREAK (on a Linux console
+// that makes the next key a SysRq command) while its replies are dropped.
+func (c *console) answered() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.heardAt != 0 && c.heardAt == c.port.Baud()
+}
+
+// unconfirmed is what the agent is told when it would type at a rate the
+// device hasn't answered at.
+func (c *console) unconfirmed() error {
+	return fmt.Errorf("nothing was sent: the device hasn't answered at %s yet, so the baud rate may be wrong. "+
+		"Press Enter with send_keys key enter to check; if there's still no reply, connect again with detect, "+
+		"or ask the user", c.settings())
 }
 
 // settings describes the line now, e.g. "9600 baud 7E1".
