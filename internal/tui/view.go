@@ -255,6 +255,12 @@ func (m *Model) mainLine(w int) string {
 	if f := m.sess.Framing(); f != serialx.Framing8N1 {
 		rate += " " + f.String() // only mention framing when it's unusual
 	}
+	if m.backspaceH.Load() { // and the rarely needed fixes, when they're on
+		rate += " ^H"
+	}
+	if m.addCR {
+		rate += " +CR"
+	}
 	baud := seg{rate + " ", fg, false}
 	var logging []seg
 	if m.log != nil {

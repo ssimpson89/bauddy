@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -290,5 +291,61 @@ func TestWhatConfirmsTheRate(t *testing.T) {
 	m.confirmKey("enter")
 	if m.paste != nil || m.note.text != unconfirmedNote {
 		t.Errorf("risky paste confirmed after a rate change: paste %v, note %q; want it held", m.paste != nil, m.note.text)
+	}
+}
+
+func TestStartEachLineAtTheLeft(t *testing.T) {
+	cr := false
+	got := string(withCR([]byte("one\ntwo\r\nthree\n"), &cr)) + string(withCR([]byte("\nfour"), &cr))
+	if want := "one\r\ntwo\r\nthree\r\n\r\nfour"; got != want {
+		t.Errorf("got %q, want %q (a CR before each bare LF, none added after a CR)", got, want)
+	}
+	cr = false
+	got = string(withCR([]byte("a\r"), &cr)) + string(withCR([]byte("\nb"), &cr))
+	if want := "a\r\nb"; got != want {
+		t.Errorf("CR and LF split across reads: got %q, want %q", got, want)
+	}
+}
+
+func TestBackspaceToH(t *testing.T) {
+	b := []byte("ab\x7f\x7fc")
+	backspaceToH(b)
+	if string(b) != "ab\b\bc" {
+		t.Errorf("got %q", b)
+	}
+}
+
+func TestTheKeyboardAndScreenFixes(t *testing.T) {
+	m := unconfirmedModel(9600)
+	var saved [][2]bool
+	m.opt.SaveKeys = func(bs, cr bool) error { saved = append(saved, [2]bool{bs, cr}); return nil }
+	if s := ansi.Strip(m.mainLine(100)); strings.Contains(s, "^H") || strings.Contains(s, "+CR") {
+		t.Errorf("off by default, so not on the bar: %q", s)
+	}
+	m.commandKey(tea.KeyPressMsg{Text: "x"}, "x")
+	m.commandKey(tea.KeyPressMsg{Text: "n"}, "n")
+	if !m.backspaceH.Load() || !m.addCR || m.note.text != "starting each line at the left" {
+		t.Errorf("after x and n: ^H %v, +CR %v, note %q", m.backspaceH.Load(), m.addCR, m.note.text)
+	}
+	if s := ansi.Strip(m.mainLine(100)); !strings.Contains(s, "9600 ^H +CR") {
+		t.Errorf("on, so shown after the rate: %q", s)
+	}
+	m.commandKey(tea.KeyPressMsg{Text: "x"}, "x")
+	if m.backspaceH.Load() || m.note.text != "Backspace sends DEL" {
+		t.Errorf("x again: ^H %v, note %q; want it back to DEL", m.backspaceH.Load(), m.note.text)
+	}
+	if want := [][2]bool{{true, false}, {true, true}, {false, true}}; fmt.Sprint(saved) != fmt.Sprint(want) {
+		t.Errorf("saved %v, want %v", saved, want)
+	}
+}
+
+// A window joining an open console gets its recent output replayed: with
+// the line feed fix on, that shows without a staircase too.
+func TestTheLineFeedFixAppliesToReplay(t *testing.T) {
+	m := unconfirmedModel(9600)
+	m.addCR = true
+	m.event(serialx.Event{Data: []byte("one\ntwo\n"), Replay: true})
+	if got := m.emu.CursorPosition(); got.X != 0 || got.Y != 2 {
+		t.Errorf("cursor at %+v after a replayed \"one\\ntwo\\n\"; want the start of line 3", got)
 	}
 }
