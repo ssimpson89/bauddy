@@ -49,6 +49,7 @@ type Binding struct {
 	Help   string // one line for the help overlay
 	Sends  bool   // sends something to the device (capital letters, by convention)
 	Keep   int    // on a narrow status line, higher stays longer; KeepAlways never goes
+	Fix    bool   // fixes a garbled screen: grouped apart in help, as it's rarely needed
 }
 
 // KeepAlways marks a key the status line always shows.
@@ -77,17 +78,17 @@ func New(esc string) Keymap {
 			{Key: "d", Action: ActDetect, Short: "detect", Help: "Detect the baud rate (listens; asks before sending Enter)", Keep: 8},
 			{Key: "r", Action: ActReconnect, Short: "reconnect", Help: "Close and reopen the port", Keep: 3},
 			{Key: "l", Action: ActLog, Short: "log", Help: "Start or stop logging to a file (includes earlier output)", Keep: 6},
-			{Key: "h", Action: ActHistory, Short: "history", Help: "Scroll back through earlier output (last 10,000 lines)", Keep: 5},
+			{Key: "h", Action: ActHistory, Short: "history", Help: "Scroll back through earlier output", Keep: 5},
 			{Key: "/", Action: ActSearch, Help: "Search earlier output"},
 			{Key: "c", Action: ActClear, Short: "clear", Help: "Clear the screen", Keep: 2},
-			{Key: "p", Action: ActPause, Short: "pause", Help: "With an AI tool on this console: pause or resume it", Keep: 9},
+			{Key: "p", Action: ActPause, Short: "pause", Help: "Pause or resume the AI tool", Keep: 9},
 			// Rarely needed, so they're in help, not on the status line.
-			{Key: "x", Action: ActBackspace, Help: "Backspace prints ^? instead of deleting? Send ^H instead (again: back to DEL)"},
-			{Key: "n", Action: ActAddCR, Help: "Lines staircase across the screen? Start each one at the left (again: off)"},
+			{Key: "x", Action: ActBackspace, Help: "Backspace shows ^? and won't erase", Fix: true},
+			{Key: "n", Action: ActAddCR, Help: "Each line starts further right", Fix: true},
 			{Key: "q", Action: ActQuit, Short: "quit", Help: "Quit", Keep: KeepAlways},
 			{Key: "esc", Action: ActLeaveCommand, Short: "back", Help: "Back to the console", Keep: KeepAlways},
-			{Key: "B", Action: ActBreak, Short: "break", Help: "Send BREAK (ROMMON, SysRq; can change a Linux login prompt's baud)", Sends: true, Keep: 4},
-			{Key: "S", Action: ActSyncSize, Short: "resize", Help: "Type `stty rows R cols C` so the remote shell fits (at a shell prompt)", Sends: true, Keep: 1},
+			{Key: "B", Action: ActBreak, Short: "break", Help: "Send BREAK (ROMMON, boot monitor; SysRq on Linux)", Sends: true, Keep: 4},
+			{Key: "S", Action: ActSyncSize, Short: "resize", Help: "Fix wrapped lines at a Linux shell (types stty rows/cols)", Sends: true, Keep: 1},
 			{Key: esc, Action: ActSendEscapeKey, Help: "Send " + esc + " itself", Sends: true},
 		},
 	}
@@ -130,13 +131,16 @@ type Group struct {
 	Bindings []Binding
 }
 
-// Groups splits the bindings into those that act on bauddy and those that
-// send something to the device.
+// Groups splits the bindings into those that act on bauddy, those that
+// send something to the device, and the fixes, in that order.
 func (k Keymap) Groups() []Group {
-	groups := []Group{{Title: "bauddy"}, {Title: "sends to the device"}}
+	groups := []Group{{Title: "bauddy"}, {Title: "Sends to the device"}, {Title: "If something looks wrong"}}
 	for _, b := range k.Commands {
 		i := 0
-		if b.Sends {
+		switch {
+		case b.Fix:
+			i = 2
+		case b.Sends:
 			i = 1
 		}
 		groups[i].Bindings = append(groups[i].Bindings, b)
@@ -144,9 +148,9 @@ func (k Keymap) Groups() []Group {
 	return groups
 }
 
-// Intro is the two lines that explain command mode.
+// Intro is the line that explains command mode.
 func (k Keymap) Intro() string {
-	return fmt.Sprintf("Everything you type goes to the device, except %s.\nPress %s, then one key:", k.Escape, k.Escape)
+	return fmt.Sprintf("Everything you type goes to the device. Press %s, then one key:", k.Escape)
 }
 
 // Cheatsheet renders the full keymap as plain text.

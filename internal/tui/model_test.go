@@ -410,3 +410,21 @@ func TestWindowTitleDropsControlCharacters(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestHelpShowsTheFixesAndTheirState(t *testing.T) {
+	m := unconfirmedModel(9600)
+	help := func() string { return ansi.Strip(m.helpBox()) }
+	s := help()
+	for _, want := range []string{"If something looks wrong", "x        Backspace shows ^? and won't erase  [off]", "n        Each line starts further right      [off]"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("help missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "Pause or resume") {
+		t.Errorf("no AI tool connected, so no pause key in help:\n%s", s)
+	}
+	m.commandKey(tea.KeyPressMsg{Text: "x"}, "x")
+	if s := help(); !strings.Contains(s, "won't erase  [on]") || !strings.Contains(s, "further right      [off]") {
+		t.Errorf("after x: help should show it on:\n%s", s)
+	}
+}
