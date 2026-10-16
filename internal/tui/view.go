@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
 	"image/color"
 	"slices"
@@ -176,7 +177,7 @@ func (m *Model) statusLine() string {
 	case modePasteConfirm:
 		return askBar(w, m.confirm.text(), [][]seg{hint("enter", "send"), hint("l", "log and send")}, "cancel")
 	case modeProbeOffer:
-		return askBar(w, "nothing heard.", [][]seg{hint("enter", "send Enter at each baud rate")}, "skip")
+		return askBar(w, cmp.Or(m.offer, "nothing heard."), [][]seg{hint("enter", "send Enter at each baud rate")}, "skip")
 	case modeHistory:
 		return m.historyBar(w)
 	}

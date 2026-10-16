@@ -103,6 +103,17 @@ type Model struct {
 	detecting    bool
 	recheckUntil time.Time // until then, garbage means the saved rate is wrong
 	quiet        bool      // connected, but nothing has arrived yet
+	// answered: the device has answered in plain text since the rate was
+	// last set (rateAt), here or in another window, or the port reconnected.
+	// Until it has, the rate is unconfirmed, and if it's slower than the
+	// device's every key reaches it as a BREAK (on a Linux console the next
+	// key is then a SysRq command) while its replies are dropped, so it
+	// seems silent. So until then only Enter goes out.
+	answered   bool
+	rateAt     int    // the rate when answered was last reset
+	answer     []byte // plain text since then, across reads, until it's enough
+	awaitReply bool   // Enter was pressed at an unconfirmed rate; a noReplyMsg is due
+	offer      string // the probe offer's opening words, e.g. "no reply at 9600."
 
 	heard    bool             // any output has arrived (including what detection heard)
 	unlogged []byte           // output since the last log, written at the start of the next one
@@ -123,6 +134,7 @@ type (
 	sessionDone   struct{}
 	noteClearMsg  struct{ id int }
 	quietCheckMsg struct{}
+	noReplyMsg    struct{}
 	detectDoneMsg struct {
 		serialx.Result
 		probe bool
@@ -131,10 +143,11 @@ type (
 )
 
 const (
-	noteFor       = 2 * time.Second        // how long an info note stays
-	firstNoteFor  = 4 * time.Second        // a note at startup stays longer, while you get your bearings
-	breakDuration = 300 * time.Millisecond // within the usual 250-500ms
-	quietAfter    = 3 * time.Second        // silence before saying nothing has arrived
+	noteFor       = 2 * time.Second         // how long an info note stays
+	firstNoteFor  = 4 * time.Second         // a note at startup stays longer, while you get your bearings
+	breakDuration = 300 * time.Millisecond  // within the usual 250-500ms
+	quietAfter    = 3 * time.Second         // silence before saying nothing has arrived
+	noReplyAfter  = 1500 * time.Millisecond // silence after Enter at an unconfirmed rate before offering to detect
 	// recheckWithin: garbage this soon after connecting at a saved rate
 	// probably means a different device is on the adapter, so detect again.
 	// Later garbage is more likely a bootloader changing rate: just hint.
@@ -275,6 +288,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case noReplyMsg:
+		m.awaitReply = false
+		if !m.confirmed() && m.mode == modeConsole && !m.detecting && m.paste == nil && m.state == serialx.Connected {
+			m.mode, m.offer = modeProbeOffer, fmt.Sprintf("no reply at %d · wrong baud?", m.sess.Baud())
+		}
+		return m, nil
+
 	case quietCheckMsg:
 		switch {
 		case m.heard: // output has arrived; nothing to say
@@ -315,7 +335,7 @@ func (m *Model) event(e serialx.Event) tea.Cmd {
 	if e.Replay { // output from before this window joined: for the screen and history only
 		_, _ = m.emu.Write(e.Data)
 		m.rememberLines(m.screen.Feed(e.Data))
-		m.heard = true
+		m.heard = true // but not answered: it may be from before a rate change
 		return nil
 	}
 	var cmds []tea.Cmd
@@ -333,6 +353,7 @@ func (m *Model) event(e serialx.Event) tea.Cmd {
 	if e.State != m.state {
 		if e.State == serialx.Connected {
 			m.meter.Reset() // the device may have come back at a different rate
+			m.resetAnswer()
 			cmds = append(cmds, m.logMark("reconnected"))
 			if m.reconnecting {
 				m.reconnecting = false
@@ -403,8 +424,16 @@ func (m *Model) consoleKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 	case key == m.keys.Escape:
 		m.mode = modeCommand
 		return m, nil
+	case key != "enter" && !m.confirmed():
+		return m, m.setNote(unconfirmedNote)
 	}
 	m.sendKey(k)
+	if key == "enter" && !m.confirmed() && !m.awaitReply {
+		// Nothing has come back at this rate yet: if Enter gets no reply
+		// either, the rate is likely wrong, so offer to detect it.
+		m.awaitReply = true
+		return m, tea.Tick(noReplyAfter, func(time.Time) tea.Msg { return noReplyMsg{} })
+	}
 	return m, nil
 }
 
@@ -419,8 +448,52 @@ func (m *Model) probeKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		m.mode = modeCommand
 		return m, nil
 	}
+	if !m.confirmed() {
+		return m, m.setNote(unconfirmedNote)
+	}
 	m.sendKey(k) // anything else: carry on typing
 	return m, nil
+}
+
+// unconfirmedNote is why a key wasn't sent: nothing has come back at this
+// rate yet, and at a wrong one the key would go out as a BREAK.
+const unconfirmedNote = "nothing back from the device yet · press Enter first"
+
+// confirmed says whether the device has answered since the rate was set.
+func (m *Model) confirmed() bool {
+	m.rateChanged()
+	return m.answered
+}
+
+// resetAnswer makes the rate unconfirmed until the device answers again.
+func (m *Model) resetAnswer() {
+	m.answered, m.answer = false, nil
+	if m.sess != nil {
+		m.rateAt = m.sess.Baud()
+	}
+}
+
+// rateChanged resets the answer if the rate has changed since, such as
+// by another window.
+func (m *Model) rateChanged() {
+	if m.sess != nil && m.sess.Baud() != m.rateAt {
+		m.resetAnswer()
+	}
+}
+
+// noteAnswer counts b towards an answer. Two bytes of plain text in a row,
+// across reads, are one; garbage starts the count again: at a rate slower
+// than the device's, some still gets through.
+func (m *Model) noteAnswer(b []byte) {
+	m.rateChanged()
+	if !serialx.Answered(b) {
+		m.answer = nil
+		return
+	}
+	m.answer = append(m.answer, b...)
+	if len(m.answer) >= 2 {
+		m.answered, m.answer = true, nil
+	}
 }
 
 // commandKey runs one command. Command mode is one-shot: afterwards you're
@@ -440,6 +513,9 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 	switch act {
 	case keymap.ActLeaveCommand:
 	case keymap.ActSendEscapeKey:
+		if !m.confirmed() {
+			return m, m.setNote(unconfirmedNote)
+		}
 		m.sendKey(k)
 	case keymap.ActHelp:
 		m.mode = modeHelp
@@ -458,6 +534,9 @@ func (m *Model) commandKey(k tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		}
 		return m, m.done("break sent", "sent BREAK")
 	case keymap.ActSyncSize:
+		if !m.confirmed() {
+			return m, m.setNote(unconfirmedNote)
+		}
 		w, h := m.emu.Width(), m.emu.Height()
 		if _, err := fmt.Fprintf(m.sess, "stty rows %d cols %d\r", h, w); err != nil {
 			return m, m.setError("can't send the window size: " + err.Error())
@@ -508,6 +587,7 @@ func (m *Model) applyBaud(b int) (tea.Model, tea.Cmd) {
 		return m, m.setError(fmt.Sprintf("can't set %d baud: %v", b, err))
 	}
 	m.meter.Reset()
+	m.resetAnswer()
 	set := m.lineSettings()
 	return m, tea.Batch(m.done(set, set), m.save())
 }
@@ -555,7 +635,7 @@ func (m *Model) detectDone(msg detectDoneMsg) tea.Cmd {
 func (m *Model) detected(msg detectDoneMsg) tea.Cmd {
 	switch {
 	case errors.Is(msg.err, serialx.ErrNoSignal) && !msg.probe && m.mode == modeConsole:
-		m.mode = modeProbeOffer
+		m.mode, m.offer = modeProbeOffer, "nothing heard."
 		return nil
 	case errors.Is(msg.err, serialx.ErrNoSignal):
 		again := m.keys.Escape + " d"
@@ -568,7 +648,13 @@ func (m *Model) detected(msg detectDoneMsg) tea.Cmd {
 	}
 	m.meter.Reset()
 	found := m.lineSettings()
-	return tea.Batch(m.output(msg.Heard), m.done("detected "+found, found+" (detected)"), m.save())
+	m.resetAnswer()
+	m.answered = true // it heard the device at this rate
+	say := "detected " + found
+	if msg.StrayLogin {
+		say += " · a stray character may have gone in as a username; Enter starts the login again"
+	}
+	return tea.Batch(m.output(msg.Heard), m.done(say, found+" (detected)"), m.save())
 }
 
 // lineSettings describes the rate and framing, e.g. "9600 baud 7E1".

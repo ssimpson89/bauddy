@@ -24,7 +24,7 @@ const (
 	whyClear   = "can drop routing sessions or connections, or clear the logs"
 	whyBoot    = "is typed at a bootloader prompt, where commands can erase or replace the software"
 	whyAnswer  = "answers the device's question"
-	whyProbe   = "presses Enter on the device: at a boot menu it starts the default entry, and at a [confirm] it confirms"
+	whyProbe   = "presses Enter on the device at each baud rate: at a boot menu it starts the default entry, at a [confirm] it confirms, and it stops a boot countdown"
 	whyRecall  = "runs a line recalled from history or completed with tab, which bauddy can't read for certain"
 	whyBreak   = "halts Sun and Solaris systems and stops Cisco gear booting; on Linux the next key typed is a " +
 		"SysRq command, and b reboots at once"

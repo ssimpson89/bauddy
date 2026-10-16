@@ -524,7 +524,7 @@ func (h *hub) portOp(p *peer, m msg) (*Result, error) {
 		h.mu.Lock()
 		h.output(r.Heard) // everyone sees what it heard
 		h.mu.Unlock()
-		return &Result{Baud: r.Baud, Framing: r.Framing.String()}, nil
+		return &Result{Baud: r.Baud, Framing: r.Framing.String(), StrayLogin: r.StrayLogin}, nil
 	}
 	return nil, errors.New("unknown operation " + m.Op)
 }

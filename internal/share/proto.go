@@ -83,8 +83,9 @@ type Status struct {
 
 // Result is what detection found, as sent over the socket.
 type Result struct {
-	Baud    int    `json:"baud"`
-	Framing string `json:"framing"`
+	Baud       int    `json:"baud"`
+	Framing    string `json:"framing"`
+	StrayLogin bool   `json:"strayLogin,omitempty"`
 }
 
 // wire reads and writes messages on one connection. Writes may come from
