@@ -807,3 +807,14 @@ func TestHoldOpensTheConsolesOwnDevice(t *testing.T) {
 		t.Errorf("cable out, its old name reused: opens %s, want the path, not another cable", got)
 	}
 }
+
+func TestClosingTheHolderRemovesItsLockFile(t *testing.T) {
+	k := newConsole(t)
+	c := k.open(false)
+	_, lockPath, _ := paths(consoleName("", k.path))
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("no lock file while open: %v", err)
+	}
+	c.Close()
+	eventually(t, "the lock file gone", func() bool { _, err := os.Stat(lockPath); return errors.Is(err, os.ErrNotExist) })
+}

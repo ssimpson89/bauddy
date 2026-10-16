@@ -38,18 +38,40 @@ func dir() (string, error) {
 
 // lock takes the lock file at path, or returns errHeld if another process
 // has it. The lock is released when the file is closed or the process
-// ends, so it can't go stale.
+// ends, so it can't go stale. The holder removes the file when it lets go
+// (unlock), so if the file locked here has gone from path meanwhile, it
+// was a holder's that just let go: try again with a fresh one.
 func lock(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|unix.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		f.Close()
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			return nil, errHeld
+	for {
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|unix.O_NOFOLLOW, 0o600)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+		lockOpened()
+		if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			f.Close()
+			if errors.Is(err, unix.EWOULDBLOCK) {
+				return nil, errHeld
+			}
+			return nil, err
+		}
+		locked, err1 := f.Stat()
+		now, err2 := os.Lstat(path)
+		if err1 == nil && err2 == nil && os.SameFile(locked, now) {
+			return f, nil
+		}
+		f.Close()
 	}
-	return f, nil
+}
+
+// lockOpened runs between opening a lock file and locking it, the moment
+// a holder can let go and remove the file; tests pause there.
+var lockOpened = func() {}
+
+// unlock lets go of a lock and removes its file, so the folder doesn't
+// fill with one per console ever opened. Removed while still held, so
+// whoever opens the path next gets a new file (see lock).
+func unlock(f *os.File) {
+	_ = os.Remove(f.Name())
+	f.Close()
 }

@@ -449,8 +449,9 @@ func (s *server) connect(ctx context.Context, req *mcp.CallToolRequest, in conne
 		quiet = "The device has printed nothing yet. send_keys with key enter usually brings up the prompt " +
 			"(at a boot menu, Enter starts the default entry). If the reply is garbled, connect again with detect."
 		if s.opt.ReadOnly {
-			quiet = "The device has printed nothing yet. Ask the user to press Enter in their bauddy window, " +
-				"then read_output can wait for the prompt. If the reply is garbled, connect again with detect."
+			quiet = "The device has printed nothing yet. Ask the user to press Enter in bauddy on this cable " +
+				"(if it isn't open, running bauddy joins this console, except on Windows), then read_output can wait for the prompt. " +
+				"If the reply is garbled, connect again with detect."
 		}
 	}
 	return text(false, head+".\n"+logNote, out, quiet), nil, nil

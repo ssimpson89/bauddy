@@ -250,7 +250,7 @@ func (c *Client) hold(lockFile *os.File, sock string) (*wire, error) {
 	port, err := c.opt.Open(c.portPath(), baud, framing)
 	if err != nil {
 		if lockFile != nil {
-			lockFile.Close()
+			unlock(lockFile)
 		}
 		return nil, err
 	}
@@ -659,7 +659,7 @@ func (h *holder) close() error {
 		}
 		err = h.port.Close()
 		if h.lock != nil {
-			h.lock.Close() // last, so nobody else opens the port before it's closed
+			unlock(h.lock) // last, so nobody else opens the port before it's closed
 		}
 	})
 	return err
