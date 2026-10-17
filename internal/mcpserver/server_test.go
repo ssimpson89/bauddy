@@ -44,7 +44,7 @@ func newSimPort(t *testing.T, d *simdev.Device) *simPort {
 				mute := p.mute
 				p.mu.Unlock()
 				if !mute {
-					p.events <- serialx.Event{Data: b}
+					p.events <- serialx.Event{Data: b, Baud: p.Baud()}
 				}
 			case <-ctx.Done():
 				return
@@ -76,7 +76,7 @@ func (p *simPort) SetBaud(b int) error { p.mu.Lock(); p.baud = b; p.mu.Unlock();
 func (p *simPort) Reconnect()          {}
 
 // say makes the device print s.
-func (p *simPort) say(s string) { p.events <- serialx.Event{Data: []byte(s)} }
+func (p *simPort) say(s string) { p.events <- serialx.Event{Data: []byte(s), Baud: p.Baud()} }
 
 // harness is a server with one simulated switch plugged in, and a client.
 type harness struct {
@@ -761,6 +761,14 @@ func TestJoiningAConsoleOpenInBauddy(t *testing.T) {
 	for end := time.Now().Add(3 * time.Second); window.Status().Heard != 0 || window.Status().Baud != 19200; time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(end) {
 			t.Fatalf("the rate change never showed: %+v", window.Status())
+		}
+	}
+	for end := time.Now().Add(3 * time.Second); ; time.Sleep(5 * time.Millisecond) { // and the tool has heard of it
+		if out, _ := h.call("connect", map[string]any{}); strings.Contains(out, "19200") {
+			break
+		}
+		if time.Now().After(end) {
+			t.Fatal("the tool never saw the rate change")
 		}
 	}
 	if out, isErr := h.call("send_command", map[string]any{"command": "show clock"}); !isErr || !strings.Contains(out, "nothing was sent") {

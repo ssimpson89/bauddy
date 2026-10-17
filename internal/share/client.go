@@ -429,7 +429,7 @@ func (c *Client) handle(m msg) {
 	switch m.T {
 	case tData:
 		c.taps.Send(m.Data)
-		c.deliver(serialx.Event{Data: m.Data, Replay: m.Replay})
+		c.deliver(serialx.Event{Data: m.Data, Replay: m.Replay, Baud: m.Baud})
 	case tState:
 		c.mu.Lock()
 		was := c.status.Connected

@@ -56,10 +56,9 @@ type console struct {
 	prompt    string   // the last cursor line that looked like a prompt, with nothing typed
 	prompts   int      // how many times a prompt has appeared
 	connected bool
-	heardAt   int       // the rate the device last answered at in plain text; 0: not since connecting
-	rateAt    int       // the rate output was last noted at
-	settling  time.Time // after a rate change, until then or the tool types, output may be from the old rate
-	answer    []byte    // plain text towards an answer, across reads
+	heardAt   int    // the rate the device last answered at in plain text; 0: not since connecting
+	answerAt  int    // the rate that text was read at
+	answer    []byte // plain text towards an answer, across reads
 	meter     serialx.GarbleMeter
 	changed   chan struct{} // closed and replaced whenever something arrives
 	rx        chan []byte   // a copy of the output for the paste pacer, while a command runs
@@ -73,7 +72,7 @@ type console struct {
 // newConsole starts recording p's output, and logging it if log isn't nil.
 func newConsole(p Port, name string, log *logfile.Log) *console {
 	c := &console{
-		port: p, name: name, log: log, connected: true, rateAt: p.Baud(), // so a change before any output counts as one
+		port: p, name: name, log: log, connected: true,
 		changed: make(chan struct{}), drained: make(chan struct{}),
 	}
 	if log != nil {
@@ -90,7 +89,7 @@ func (c *console) drain() {
 		c.mu.Lock()
 		c.feed(e.Data)
 		if !e.Replay { // output from before the agent joined may be from another rate
-			c.noteAnswer(e.Data)
+			c.noteAnswer(e.Data, e.Baud)
 		}
 		if up := e.State == serialx.Connected; up != c.connected {
 			c.connected = up
@@ -195,31 +194,26 @@ func (c *console) detected(r serialx.Result) {
 // noteAnswer counts b towards an answer. Two bytes of plain text in a row,
 // across reads, are one; garbage starts the count again: at a rate slower
 // than the device's, some still gets through. Call with mu held.
-func (c *console) noteAnswer(b []byte) {
+// It counts at the rate b was read at, so output read just before a rate
+// change proves only the old rate.
+func (c *console) noteAnswer(b []byte, baud int) {
 	if len(b) == 0 {
 		return
 	}
-	if baud := c.port.Baud(); baud != c.rateAt { // reads from before a change may still be arriving
-		if c.rateAt != 0 {
-			c.settling, c.answer = time.Now().Add(rateSettle), nil
-		}
-		c.rateAt = baud
-	}
-	if time.Now().Before(c.settling) {
-		return
+	if baud == 0 { // not known: a port that doesn't say
+		baud = c.port.Baud()
 	}
 	if !serialx.Answered(b) {
 		c.answer = nil
 		return
 	}
+	if baud != c.answerAt {
+		c.answer, c.answerAt = nil, baud
+	}
 	if c.answer = append(c.answer, b...); len(c.answer) >= 2 {
-		c.heardAt, c.answer = c.port.Baud(), nil
+		c.heardAt, c.answer = baud, nil
 	}
 }
-
-// rateSettle is how long after a rate change output doesn't count as an
-// answer at the new rate, unless the tool types sooner, as in the hub.
-const rateSettle = 250 * time.Millisecond
 
 // answered says whether the device has answered in plain text at the
 // current rate. Until it has, the rate is unconfirmed: at a rate slower
@@ -254,12 +248,6 @@ func (c *console) up() bool {
 
 // write sends b to the device.
 func (c *console) write(b []byte) error {
-	c.mu.Lock()
-	if baud := c.port.Baud(); baud != c.rateAt { // typed at a new rate: what answers is at it
-		c.rateAt, c.answer = baud, nil
-	}
-	c.settling = time.Time{} // what answers this was sent at the current rate
-	c.mu.Unlock()
 	_, err := c.port.Write(b)
 	return err
 }
