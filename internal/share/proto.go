@@ -73,12 +73,13 @@ type Status struct {
 	Connected bool   `json:"connected"`
 	Baud      int    `json:"baud"`
 	Framing   string `json:"framing"`
-	Windows   int    `json:"windows"`   // bauddy windows on it
-	Agent     string `json:"agent"`     // the connected AI tool's name, or ""
-	Working   bool   `json:"working"`   // the AI tool has the keyboard
-	Paused    bool   `json:"paused"`    // the user paused the AI tool
-	Detecting bool   `json:"detecting"` // baud detection is running
-	Hub       string `json:"hub"`       // which hub: it changes when another bauddy takes over the port
+	Windows   int    `json:"windows"`         // bauddy windows on it
+	Agent     string `json:"agent"`           // the connected AI tool's name, or ""
+	Working   bool   `json:"working"`         // the AI tool has the keyboard
+	Paused    bool   `json:"paused"`          // the user paused the AI tool
+	Detecting bool   `json:"detecting"`       // baud detection is running
+	Hub       string `json:"hub"`             // which hub: it changes when another bauddy takes over the port
+	Heard     int    `json:"heard,omitempty"` // the rate the device last answered at in plain text; 0: not since it connected
 }
 
 // Result is what detection found, as sent over the socket.

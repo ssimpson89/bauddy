@@ -80,7 +80,10 @@ type hub struct {
 
 	mu        sync.Mutex
 	peers     map[*peer]struct{}
-	ring      []byte // the latest output, for joining windows
+	ring      []byte    // the latest output, for joining windows
+	heard     int       // the rate the device last answered at in plain text; 0: not since it connected
+	answer    []byte    // plain text towards an answer at the current rate
+	settling  time.Time // after a rate change, until then or the next keystroke, output may be from the old rate
 	connected bool
 	detecting bool
 	busy      bool  // a port operation is running
@@ -125,9 +128,11 @@ func (h *hub) pump() {
 		h.mu.Lock()
 		if len(e.Data) > 0 {
 			h.output(e.Data)
+			h.noteAnswer(e.Data)
 		}
 		if up := e.State == serialx.Connected; up != h.connected {
 			h.connected = up
+			h.heard, h.answer = 0, nil // it may come back at another rate
 			h.broadcastState()
 		}
 		h.mu.Unlock()
@@ -150,6 +155,29 @@ func (h *hub) output(b []byte) {
 	}
 	for p := range h.peers {
 		h.queue(p, msg{T: tData, Data: b})
+	}
+}
+
+// rateSettle is how long after a rate change output doesn't count as an
+// answer at the new rate, unless something is typed sooner: reads from
+// before the change may still be on their way.
+const rateSettle = 250 * time.Millisecond
+
+// noteAnswer counts b towards the device answering at the current rate, as
+// bauddy mcp does for itself: two bytes of plain text in a row. Shared, so
+// an AI tool joining a console the user is already typing on can type
+// without first pressing Enter to prove the rate. Call with mu held.
+func (h *hub) noteAnswer(b []byte) {
+	if !serialx.Answered(b) || h.now().Before(h.settling) {
+		h.answer = nil
+		return
+	}
+	if h.answer = append(h.answer, b...); len(h.answer) >= 2 {
+		h.answer = nil
+		if baud := h.port.Baud(); h.heard != baud {
+			h.heard = baud
+			h.broadcastState()
+		}
 	}
 }
 
@@ -282,6 +310,7 @@ func (h *hub) write(p *peer, b []byte) {
 		h.lastKey = h.now() // a paste counts as typing too
 		h.trackUser(b)
 	}
+	h.settling = time.Time{} // what answers this was sent at the new rate
 	_, _ = h.port.Write(b)
 }
 
@@ -527,7 +556,12 @@ func (h *hub) portOp(p *peer, m msg) (*Result, error) {
 
 	switch m.Op {
 	case opSetBaud:
-		return nil, h.port.SetBaud(m.Baud)
+		err := h.port.SetBaud(m.Baud)
+		h.mu.Lock()
+		h.heard, h.answer = 0, nil // unproven at the new rate
+		h.settling = h.now().Add(rateSettle)
+		h.mu.Unlock()
+		return nil, err
 	case opBreak:
 		return nil, h.port.Break(breakLength)
 	case opReconnect:
@@ -540,6 +574,7 @@ func (h *hub) portOp(p *peer, m msg) (*Result, error) {
 		}
 		h.mu.Lock()
 		h.output(r.Heard) // everyone sees what it heard
+		h.heard, h.answer = r.Baud, nil
 		h.mu.Unlock()
 		return &Result{Baud: r.Baud, Framing: r.Framing.String(), StrayLogin: r.StrayLogin}, nil
 	}
@@ -552,6 +587,7 @@ func (h *hub) broadcastState() {
 	s := Status{
 		Connected: h.connected, Baud: h.port.Baud(), Framing: h.port.Framing().String(),
 		Working: h.lease, Paused: h.paused, Detecting: h.detecting, Windows: len(h.peers), Hub: h.id,
+		Heard: h.heard,
 	}
 	if h.agent != nil {
 		s.Agent, s.Windows = h.agent.name, s.Windows-1
