@@ -3,6 +3,7 @@ package termtext
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestCleaner(t *testing.T) {
@@ -29,6 +30,20 @@ func TestCleaner(t *testing.T) {
 		{"utf8", []string{"[ ✓ ] ok\r\n"}, "[ ✓ ] ok\n"},
 		{"charset select", []string{"a\x1b(Bb\r\n"}, "ab\n"},
 		{"partial line held", []string{"login: "}, ""},
+		// What tcsh on FreeBSD sends for line editing, captured on OPNsense.
+		{"tcsh ctrl+u", []string{"# echo abc", "\x1b[8D\x1b[K", "\r\n"}, "# \n"},
+		{"tcsh history recall", []string{"# echo abc\x1b[8D\x1b[K", "sleep 30\r\n"}, "# sleep 30\n"},
+		{"tcsh insert mid-line", []string{"# echo abcdef", "\b\b\b", "Xdef\b\b\b", "\r\n"}, "# echo abcXdef\n"},
+		{"tcsh backspace mid-line", []string{"# echo abcXdef\b\b\b", "\bdef\x1b[K\b\b\b", "\r\n"}, "# echo abcdef\n"},
+		{"cr overwrites, as on screen", []string{"abcdef\rxy\r\n"}, "xycdef\n"},
+		{"move right pads", []string{"ab\x1b[3Cx\r\n"}, "ab   x\n"},
+		{"delete a character", []string{"abcd\b\b\x1b[P\r\n"}, "abd\n"},
+		{"insert a blank", []string{"abd\b\x1b[@c\r\n"}, "abcd\n"},
+		{"full-screen program, then a prompt", []string{"  32709 root ospfd\x1b[43;1Hroot@fw:~ # \r\n"}, "  32709 root ospfd\nroot@fw:~ # \n"},
+		{"utf8 split across reads", []string{"\xe2\x9c", "\x93 ok\r\n"}, "✓ ok\n"},
+		{"broken utf8, then text", []string{"\xe2X\r\n"}, "\uFFFDX\n"},
+		{"colour after cr keeps a prompt's space", []string{"# \r\x1b[0m\n"}, "# \n"},
+		{"cursor home with no column", []string{"\x1b[20G\x1b[Hroot# \r\n"}, "root# \n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -50,7 +65,40 @@ func TestLongLineIsBounded(t *testing.T) {
 		c.Feed([]byte(strings.Repeat("\xfe", 4096))) // garbage, no newline
 	}
 	c.Feed([]byte("end"))
-	if p := c.Partial(); len(p) > lineMax || !strings.HasSuffix(p, "end") {
-		t.Errorf("partial line is %d bytes, ending %q", len(p), p[len(p)-3:])
+	if p := c.Partial(); utf8.RuneCountInString(p) > lineMax || !strings.HasSuffix(p, "end") {
+		t.Errorf("partial line is %d characters, ending %q", utf8.RuneCountInString(p), p[len(p)-3:])
+	}
+}
+
+// Line noise can hold any number: moves and inserts stay within a line's
+// bounds rather than allocating what the number says.
+func TestHugeCursorNumbersAreBounded(t *testing.T) {
+	for _, in := range []string{"\x1b[1000000000Cx", "a\r\x1b[1000000000@", "\x1b[1000000000Gx", "\x1b[1;1000000000Hx"} {
+		var c Cleaner
+		c.Feed([]byte(in))
+		if n := utf8.RuneCountInString(c.Partial()); n > lineMax+1 {
+			t.Errorf("%q: line of %d characters", in, n)
+		}
+	}
+}
+
+func TestFlushShowsACharacterCutShort(t *testing.T) {
+	var c Cleaner
+	c.Feed([]byte("ok \xe2"))
+	if got := string(c.Flush()); got != "ok \uFFFD\n" {
+		t.Errorf("got %q", got)
+	}
+	if got := c.Feed([]byte("\x9c\x93\n")); strings.Contains(string(got), "✓") {
+		t.Errorf("the next read joined the old character: %q", got)
+	}
+}
+
+func TestFlushStartsTheNextLineAtTheLeft(t *testing.T) {
+	var c Cleaner
+	c.Feed([]byte("\x1b[20G"))
+	c.Flush()
+	c.Feed([]byte("root# "))
+	if got := c.Partial(); got != "root# " {
+		t.Errorf("got %q", got)
 	}
 }
