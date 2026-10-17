@@ -28,6 +28,9 @@ type Event struct {
 	// Replay marks output from before this client joined a shared console:
 	// for the screen and history, not new output.
 	Replay bool
+	// Baud is the rate Data was read at, so output read just before a rate
+	// change isn't taken for the device answering at the new one. 0: not known.
+	Baud int
 }
 
 var (
@@ -158,12 +161,13 @@ func (s *Session) readLoop() {
 			continue
 		}
 		s.ioMu.Lock()
+		baud := s.Baud() // under ioMu: SetBaud and Detect change the rate only between reads
 		n, err := p.Read(buf)
 		s.ioMu.Unlock()
 		if n > 0 {
 			data := append([]byte(nil), buf[:n]...)
 			s.taps.Send(data)
-			s.emit(Event{Data: data})
+			s.emit(Event{Data: data, Baud: baud})
 		}
 		if err != nil && !s.isClosed() {
 			s.closePort(p)
@@ -211,6 +215,8 @@ func (s *Session) Framing() Framing {
 
 // SetBaud changes the rate. While disconnected it applies on reconnect.
 func (s *Session) SetBaud(baud int) error {
+	s.ioMu.Lock() // between reads, so each read is stamped with the rate it ran at
+	defer s.ioMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	mode := s.mode
@@ -219,6 +225,7 @@ func (s *Session) SetBaud(baud int) error {
 		if err := s.port.SetMode(&mode); err != nil {
 			return err
 		}
+		_ = s.port.ResetInputBuffer() // bytes received at the old rate would read as the new one's
 	}
 	s.mode = mode
 	return nil

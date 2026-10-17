@@ -40,7 +40,8 @@ func (p *fakePort) Framing() serialx.Framing  { return serialx.Framing8N1 }
 func (p *fakePort) SetBaud(b int) error       { p.mu.Lock(); p.baud = b; p.mu.Unlock(); return nil }
 func (p *fakePort) Break(time.Duration) error { return nil }
 func (p *fakePort) Reconnect()                {}
-func (p *fakePort) say(s string)              { p.events <- serialx.Event{Data: []byte(s)} }
+func (p *fakePort) say(s string)              { p.sayAt(p.Baud(), s) }
+func (p *fakePort) sayAt(baud int, s string)  { p.events <- serialx.Event{Data: []byte(s), Baud: baud} }
 func (p *fakePort) Close() error              { p.once.Do(func() { close(p.events) }); return nil }
 func (p *fakePort) Detect(serialx.DetectConfig) (serialx.Result, error) {
 	p.mu.Lock()
@@ -940,22 +941,16 @@ func TestTheConsoleRemembersTheRateItHeard(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "unproven at 19200", func() bool { return w.Status().Heard == 0 && w.Status().Baud == 19200 })
-	k.port(0).say("Switch#") // read at 9600, processed after the change: not proof of 19200
-	time.Sleep(rateSettle / 2)
-	if got := w.Status().Heard; got != 0 {
-		t.Fatalf("output right after the rate change counted as an answer at %d", got)
-	}
-	time.Sleep(rateSettle)
+	k.port(0).sayAt(9600, "Switch#") // read at 9600, processed after the change: proof of 9600 only
+	eventually(t, "the late output noted at its own rate", func() bool { return w.Status().Heard == 9600 })
 	k.port(0).say("Switch#")
 	eventually(t, "heard at 19200", func() bool { return w.Status().Heard == 19200 })
-	if err := w.SetBaud(9600); err != nil { // typing at the new rate ends the wait: what follows answers it
+	if err := w.SetBaud(9600); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "unproven at 9600", func() bool { return w.Status().Heard == 0 && w.Status().Baud == 9600 })
-	w.Write([]byte("\r"))
-	eventually(t, "Enter reached the device", func() bool { return strings.HasSuffix(k.port(0).written(), "\r") })
 	k.port(0).say("Switch#")
-	eventually(t, "heard the reply to Enter at once", func() bool { return w.Status().Heard == 9600 })
+	eventually(t, "heard at 9600 again", func() bool { return w.Status().Heard == 9600 })
 	k.port(0).events <- serialx.Event{State: serialx.Disconnected}
 	eventually(t, "unproven after the cable dropped", func() bool { return w.Status().Heard == 0 })
 }

@@ -80,10 +80,10 @@ type hub struct {
 
 	mu        sync.Mutex
 	peers     map[*peer]struct{}
-	ring      []byte    // the latest output, for joining windows
-	heard     int       // the rate the device last answered at in plain text; 0: not since it connected
-	answer    []byte    // plain text towards an answer at the current rate
-	settling  time.Time // after a rate change, until then or the next keystroke, output may be from the old rate
+	ring      []byte // the latest output, for joining windows
+	heard     int    // the rate the device last answered at in plain text; 0: not since it connected
+	answer    []byte // plain text towards an answer at answerAt
+	answerAt  int    // the rate that text was read at
 	connected bool
 	detecting bool
 	busy      bool  // a port operation is running
@@ -127,8 +127,8 @@ func (h *hub) pump() {
 	for e := range h.port.Events() {
 		h.mu.Lock()
 		if len(e.Data) > 0 {
-			h.output(e.Data)
-			h.noteAnswer(e.Data)
+			h.output(e.Data, e.Baud)
+			h.noteAnswer(e.Data, e.Baud)
 		}
 		if up := e.State == serialx.Connected; up != h.connected {
 			h.connected = up
@@ -148,33 +148,36 @@ func (h *hub) pump() {
 }
 
 // output records device output and sends it to everyone. Call with mu held.
-func (h *hub) output(b []byte) {
+func (h *hub) output(b []byte, baud int) {
 	h.ring = append(h.ring, b...)
 	if over := len(h.ring) - replayMax; over > 0 {
 		h.ring = h.ring[over:]
 	}
 	for p := range h.peers {
-		h.queue(p, msg{T: tData, Data: b})
+		h.queue(p, msg{T: tData, Data: b, Baud: baud})
 	}
 }
-
-// rateSettle is how long after a rate change output doesn't count as an
-// answer at the new rate, unless something is typed sooner: reads from
-// before the change may still be on their way.
-const rateSettle = 250 * time.Millisecond
 
 // noteAnswer counts b towards the device answering at the current rate, as
 // bauddy mcp does for itself: two bytes of plain text in a row. Shared, so
 // an AI tool joining a console the user is already typing on can type
 // without first pressing Enter to prove the rate. Call with mu held.
-func (h *hub) noteAnswer(b []byte) {
-	if !serialx.Answered(b) || h.now().Before(h.settling) {
+// It counts at the rate b was read at, so output read just before a rate
+// change proves only the old rate.
+func (h *hub) noteAnswer(b []byte, baud int) {
+	if baud == 0 { // not known: a port that doesn't say
+		baud = h.port.Baud()
+	}
+	if !serialx.Answered(b) {
 		h.answer = nil
 		return
 	}
+	if baud != h.answerAt {
+		h.answer, h.answerAt = nil, baud
+	}
 	if h.answer = append(h.answer, b...); len(h.answer) >= 2 {
 		h.answer = nil
-		if baud := h.port.Baud(); h.heard != baud {
+		if h.heard != baud {
 			h.heard = baud
 			h.broadcastState()
 		}
@@ -310,7 +313,6 @@ func (h *hub) write(p *peer, b []byte) {
 		h.lastKey = h.now() // a paste counts as typing too
 		h.trackUser(b)
 	}
-	h.settling = time.Time{} // what answers this was sent at the new rate
 	_, _ = h.port.Write(b)
 }
 
@@ -559,7 +561,6 @@ func (h *hub) portOp(p *peer, m msg) (*Result, error) {
 		err := h.port.SetBaud(m.Baud)
 		h.mu.Lock()
 		h.heard, h.answer = 0, nil // unproven at the new rate
-		h.settling = h.now().Add(rateSettle)
 		h.mu.Unlock()
 		return nil, err
 	case opBreak:
@@ -573,7 +574,7 @@ func (h *hub) portOp(p *peer, m msg) (*Result, error) {
 			return nil, err
 		}
 		h.mu.Lock()
-		h.output(r.Heard) // everyone sees what it heard
+		h.output(r.Heard, r.Baud) // everyone sees what it heard
 		h.heard, h.answer = r.Baud, nil
 		h.mu.Unlock()
 		return &Result{Baud: r.Baud, Framing: r.Framing.String(), StrayLogin: r.StrayLogin}, nil
