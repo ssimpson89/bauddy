@@ -143,6 +143,20 @@ func (d *Device) cpuLoop(ctx context.Context) {
 		d.mu.Unlock()
 
 		d.talk.Lock()
+		if c == '\b' || c == 0x7f { // erase the last character, and on screen: back, blank, back
+			if len(line) > 0 {
+				line = line[:len(line)-1]
+				d.mu.Lock()
+				d.typed = string(line)
+				quiet := d.NoEcho || d.secret
+				d.mu.Unlock()
+				if !quiet {
+					d.send(ctx, "\b \b")
+				}
+			}
+			d.talk.Unlock()
+			continue
+		}
 		if c != '\r' {
 			line = append(line, c)
 			d.mu.Lock()
@@ -153,8 +167,16 @@ func (d *Device) cpuLoop(ctx context.Context) {
 			switch {
 			case quiet:
 			case d.Width > 0 && len(p)+1+len(line)-shift >= d.Width:
+				was := len(p) + len(line) - 1 - shift // what showed before this character
+				if shift > 0 {
+					was++ // the "$"
+				}
 				shift += 10 // IOS scrolls a long line left 10 at a time: "prompt$tail"
-				d.send(ctx, "\r"+p+"$"+string(line[shift:]))
+				redraw := "\r" + p + "$" + string(line[shift:])
+				if left := was - (len(p) + 1 + len(line) - shift); left > 0 { // blank what the shorter line leaves
+					redraw += strings.Repeat(" ", left) + strings.Repeat("\b", left)
+				}
+				d.send(ctx, redraw)
 			default:
 				d.send(ctx, string(c))
 			}
