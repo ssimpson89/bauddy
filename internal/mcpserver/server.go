@@ -96,7 +96,9 @@ since failed logins can lock the account. Avoid commands that print forever (deb
 ping without a count, tail -f); ctrl+c stops most. If output stops at --More--,
 press space, or turn paging off first: terminal length 0 on Cisco IOS, NX-OS
 and Arista; terminal pager 0 on ASA; set cli screen-length 0 on Junos; no page
-on HPE. If output is garbled, connect again with detect.`
+on HPE. On a Unix shell, use cat, head or grep rather than less, more or man,
+and top -b -n 1 (Linux) or top -b (BSD) rather than top: full-screen programs
+wait for keys. If output is garbled, connect again with detect.`
 
 type server struct {
 	opt  Options
@@ -567,7 +569,7 @@ func (s *server) sendCommand(ctx context.Context, req *mcp.CallToolRequest, in c
 }
 
 // paging matches a pager's question, such as --More--, as the pacer reports it.
-var paging = regexp.MustCompile(`(?i)-\s*more|\(more|q quit`)
+var paging = regexp.MustCompile(`(?i)-\s*more|\(more|q quit|\(end\)|asking: :$`)
 
 // marked follows a line that needs approval, when the approval shows several.
 const marked = "   <- this one"
@@ -601,6 +603,9 @@ func stopAdvice(stop *paste.StopError, lines int) (string, bool) {
 	switch {
 	case strings.HasPrefix(stop.Reason, "device is asking") && paging.MatchString(stop.Reason):
 		msg += "\nThe device is paging: send_keys key space shows the next page, text q stops. Turning paging off first avoids this."
+		isErr = false
+	case strings.HasPrefix(stop.Reason, "device is showing"):
+		msg += "\nIt's waiting for keys: send_keys text q quits less, more, man and top. cat, head or grep, and top -b -n 1 (Linux) or top -b (BSD), print and return to the prompt."
 		isErr = false
 	case strings.HasPrefix(stop.Reason, "device is asking"):
 		msg += "\nAnswer with send_keys: key enter or text y to go ahead, text n to cancel."

@@ -85,6 +85,23 @@ var (
 		"busybox": true}
 )
 
+// screenPrograms are pagers and full-screen programs, which wait for keys
+// with no prompt: on a serial console less shows just the file's name.
+var screenPrograms = map[string]bool{"less": true, "more": true, "most": true, "man": true, "vi": true,
+	"vim": true, "view": true, "nano": true, "top": true, "htop": true}
+
+// fullScreen reports whether line runs one, as sudo less, /usr/bin/less or
+// dmesg | less too.
+func fullScreen(line string) bool {
+	for _, c := range Commands(line) {
+		name, _, _ := strings.Cut(c, " ")
+		if screenPrograms[name] {
+			return true
+		}
+	}
+	return false
+}
+
 // Commands splits a line into the commands it runs, in lower case with
 // single spaces: a shell chain is split up, and wrappers (sudo -u root),
 // quotes (bash -c 'reboot') and paths (/sbin/reboot) are removed.
@@ -199,7 +216,8 @@ var (
 		`bad command name|no such item|^\s*failure:|^\s*error:`)
 	// question matches prompts that would take the next pasted line as an answer.
 	question = regexp.MustCompile(`(?i)\[confirm\]|\[y(es)?/n(o)?\]|\(y(es)?/n(o)?\)|\[yes,\s*no\]|` +
-		`-+\s*more\s*-+|---\(more.*\)---|-- \[q quit|\[[^\]]*\]\?\s*$|\?\s*\[[^\]]*\]\s*$|press any key`)
+		`-+\s*more\s*-+|---\(more.*\)---|-- \[q quit|\[[^\]]*\]\?\s*$|\?\s*\[[^\]]*\]\s*$|press any key|` +
+		`^:\s*$|\(end\)\s*$`) // less: its prompt after the first page, and at the end
 	// promptChanger matches commands after which the prompt starts differently.
 	promptChanger = regexp.MustCompile(`^\s*(hostname|su|sudo|exit|logout|ssh|telnet)\b`)
 	// login matches username and password prompts, which count as ready.
@@ -214,6 +232,7 @@ const (
 	window     = 8                      // characters typed ahead of the echo: half a 16-byte UART FIFO
 	echoWait   = 2 * time.Second        // no echo progress for this long: stop without pressing Enter
 	quietWait  = 300 * time.Millisecond // no prompt known: this much silence means ready
+	screenWait = 1 * time.Second        // a full-screen program: this much silence means it's waiting for keys
 	silentWait = 1 * time.Second        // no prompt known and no reply at all: move on
 	textWait   = 150 * time.Millisecond // free-text input: silence between lines
 	promptWait = 60 * time.Second       // a prompt is expected but hasn't come back: stop
@@ -266,6 +285,7 @@ type lineSend struct {
 	matched    int    // bytes of want the device shows
 	lastEcho   time.Time
 	entered    bool
+	fullScreen bool // the line runs a pager or full-screen program
 	newLine    bool // a line ended since Enter
 	atPrompt   bool
 }
@@ -277,6 +297,7 @@ func (r *run) line(ctx context.Context, line string) error {
 		body: body, want: strings.ToLower(body), enter: len(body) < len(line),
 		start: start, blind: password.MatchString(start), lastEcho: time.Now(),
 	}
+	ls.fullScreen = fullScreen(body)
 	if r.textEnd != "" && strings.Contains(body, r.textEnd) {
 		r.textEnd = "" // this line ends the free text; expect a prompt again
 	}
@@ -397,7 +418,13 @@ func (r *run) awaitPrompt(ctx context.Context, ls *lineSend) error {
 				return nil
 			case r.textEnd != "" && idle >= textWait:
 				return nil
+			case ls.fullScreen && replied && idle >= screenWait:
+				return stop("device is showing a full-screen program, waiting for keys")
 			case r.promptKnown:
+				if now.Sub(enteredAt) >= promptWait {
+					return stop("no prompt after %s", promptWait)
+				}
+			case ls.fullScreen: // its screen going quiet isn't a prompt; wait for screenWait, or give up
 				if now.Sub(enteredAt) >= promptWait {
 					return stop("no prompt after %s", promptWait)
 				}
