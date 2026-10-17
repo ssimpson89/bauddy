@@ -8,9 +8,10 @@ It's also an MCP server, so an AI agent such as Claude can use the console
 while you watch. It asks you first before commands that commonly reboot,
 erase or save the device.
 
-Free and open source (MIT). Early beta for macOS, Linux and Windows: not yet
-tested on real hardware or on Windows, so expect rough edges and please
-[report them](https://github.com/ssimpson89/bauddy/issues).
+Free and open source (MIT), for macOS, Linux and Windows. It's been tested
+with real switches, servers and routers on macOS and Linux, but not yet on
+Windows. If something doesn't work, please
+[report it](https://github.com/ssimpson89/bauddy/issues).
 
 ![bauddy connected to a switch](docs/screenshot.png)
 
@@ -50,7 +51,7 @@ brew install ssimpson89/tap/bauddy
 
 `brew upgrade` keeps it up to date. For betas too, install
 `ssimpson89/tap/bauddy@beta` instead (`brew uninstall bauddy` first; only
-one can be installed). Until the first stable release, both get the betas.
+one can be installed).
 
 Or download the file for your system from the
 [releases page](https://github.com/ssimpson89/bauddy/releases), unzip it,
@@ -59,6 +60,9 @@ and put `bauddy` somewhere on your path:
 - Mac with Apple silicon: `darwin_arm64`; Intel Mac: `darwin_amd64`
 - Most Linux PCs: `linux_amd64`; Raspberry Pi: `linux_arm64` or `linux_armv7`
 - Windows: `windows_amd64` (a zip with `bauddy.exe`)
+
+On Linux there are also `.rpm` and `.deb` packages for the same systems:
+`sudo dnf install ./bauddy-*.rpm` or `sudo apt install ./bauddy_*.deb`.
 
 **macOS** blocks a downloaded file the first time, because it isn't signed
 by Apple (Homebrew takes care of this for you). Allow it in System Settings
