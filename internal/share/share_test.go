@@ -922,3 +922,40 @@ func TestResumeAfterThePausedToolLeft(t *testing.T) {
 	}
 	eventually(t, "paused again", func() bool { return w.Status().Paused })
 }
+
+// The console remembers the rate the device last answered at in plain
+// text, so an AI tool joining needn't press Enter to prove it; a rate change
+// or a dropped cable makes it unproven again.
+func TestTheConsoleRemembersTheRateItHeard(t *testing.T) {
+	k := newConsole(t)
+	w := k.open(false)
+	k.port(0).say("\x80\xff") // noise isn't an answer
+	time.Sleep(20 * time.Millisecond)
+	if got := w.Status().Heard; got != 0 {
+		t.Fatalf("heard %d from noise", got)
+	}
+	k.port(0).say("Switch#")
+	eventually(t, "heard at 9600", func() bool { return w.Status().Heard == 9600 })
+	if err := w.SetBaud(19200); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "unproven at 19200", func() bool { return w.Status().Heard == 0 && w.Status().Baud == 19200 })
+	k.port(0).say("Switch#") // read at 9600, processed after the change: not proof of 19200
+	time.Sleep(rateSettle / 2)
+	if got := w.Status().Heard; got != 0 {
+		t.Fatalf("output right after the rate change counted as an answer at %d", got)
+	}
+	time.Sleep(rateSettle)
+	k.port(0).say("Switch#")
+	eventually(t, "heard at 19200", func() bool { return w.Status().Heard == 19200 })
+	if err := w.SetBaud(9600); err != nil { // typing at the new rate ends the wait: what follows answers it
+		t.Fatal(err)
+	}
+	eventually(t, "unproven at 9600", func() bool { return w.Status().Heard == 0 && w.Status().Baud == 9600 })
+	w.Write([]byte("\r"))
+	eventually(t, "Enter reached the device", func() bool { return strings.HasSuffix(k.port(0).written(), "\r") })
+	k.port(0).say("Switch#")
+	eventually(t, "heard the reply to Enter at once", func() bool { return w.Status().Heard == 9600 })
+	k.port(0).events <- serialx.Event{State: serialx.Disconnected}
+	eventually(t, "unproven after the cable dropped", func() bool { return w.Status().Heard == 0 })
+}

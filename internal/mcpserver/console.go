@@ -56,8 +56,10 @@ type console struct {
 	prompt    string   // the last cursor line that looked like a prompt, with nothing typed
 	prompts   int      // how many times a prompt has appeared
 	connected bool
-	heardAt   int    // the rate the device last answered at in plain text; 0: not since connecting
-	answer    []byte // plain text towards an answer, across reads
+	heardAt   int       // the rate the device last answered at in plain text; 0: not since connecting
+	rateAt    int       // the rate output was last noted at
+	settling  time.Time // after a rate change, until then or the tool types, output may be from the old rate
+	answer    []byte    // plain text towards an answer, across reads
 	meter     serialx.GarbleMeter
 	changed   chan struct{} // closed and replaced whenever something arrives
 	rx        chan []byte   // a copy of the output for the paste pacer, while a command runs
@@ -71,7 +73,7 @@ type console struct {
 // newConsole starts recording p's output, and logging it if log isn't nil.
 func newConsole(p Port, name string, log *logfile.Log) *console {
 	c := &console{
-		port: p, name: name, log: log, connected: true,
+		port: p, name: name, log: log, connected: true, rateAt: p.Baud(), // so a change before any output counts as one
 		changed: make(chan struct{}), drained: make(chan struct{}),
 	}
 	if log != nil {
@@ -197,6 +199,15 @@ func (c *console) noteAnswer(b []byte) {
 	if len(b) == 0 {
 		return
 	}
+	if baud := c.port.Baud(); baud != c.rateAt { // reads from before a change may still be arriving
+		if c.rateAt != 0 {
+			c.settling, c.answer = time.Now().Add(rateSettle), nil
+		}
+		c.rateAt = baud
+	}
+	if time.Now().Before(c.settling) {
+		return
+	}
 	if !serialx.Answered(b) {
 		c.answer = nil
 		return
@@ -206,6 +217,10 @@ func (c *console) noteAnswer(b []byte) {
 	}
 }
 
+// rateSettle is how long after a rate change output doesn't count as an
+// answer at the new rate, unless the tool types sooner, as in the hub.
+const rateSettle = 250 * time.Millisecond
+
 // answered says whether the device has answered in plain text at the
 // current rate. Until it has, the rate is unconfirmed: at a rate slower
 // than the device's, every byte reaches it as a BREAK (on a Linux console
@@ -213,7 +228,8 @@ func (c *console) noteAnswer(b []byte) {
 func (c *console) answered() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.heardAt != 0 && c.heardAt == c.port.Baud()
+	baud := c.port.Baud()
+	return c.heardAt != 0 && c.heardAt == baud || heardOnConsole(c.port, baud)
 }
 
 // unconfirmed is what the agent is told when it would type at a rate the
@@ -238,6 +254,12 @@ func (c *console) up() bool {
 
 // write sends b to the device.
 func (c *console) write(b []byte) error {
+	c.mu.Lock()
+	if baud := c.port.Baud(); baud != c.rateAt { // typed at a new rate: what answers is at it
+		c.rateAt, c.answer = baud, nil
+	}
+	c.settling = time.Time{} // what answers this was sent at the current rate
+	c.mu.Unlock()
 	_, err := c.port.Write(b)
 	return err
 }

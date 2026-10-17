@@ -72,8 +72,8 @@ func (p *simPort) Detect(serialx.DetectConfig) (serialx.Result, error) {
 	return serialx.Result{Baud: p.d.Baud, Framing: serialx.Framing8N1}, nil
 }
 
-func (p *simPort) SetBaud(int) error { return nil }
-func (p *simPort) Reconnect()        {}
+func (p *simPort) SetBaud(b int) error { p.mu.Lock(); p.baud = b; p.mu.Unlock(); return nil }
+func (p *simPort) Reconnect()          {}
 
 // say makes the device print s.
 func (p *simPort) say(s string) { p.events <- serialx.Event{Data: []byte(s)} }
@@ -749,13 +749,28 @@ func TestJoiningAConsoleOpenInBauddy(t *testing.T) {
 		t.Errorf("the window should show the AI tool by its client's name, got %q", got)
 	}
 
-	// What it sees on joining may be from before a rate change: only Enter
-	// until the device answers now.
+	// The console has heard the device answer at this rate, so the tool
+	// needn't press Enter to prove it.
+	if out, isErr := h.call("send_command", map[string]any{"command": "show clock"}); isErr || !strings.Contains(out, "output of show clock") {
+		t.Fatalf("send_command on joining a console that has answered at this rate:\n%s", out)
+	}
+	// At a rate nobody has heard the device at, only Enter until it answers.
+	if err := window.SetBaud(19200); err != nil {
+		t.Fatal(err)
+	}
+	for end := time.Now().Add(3 * time.Second); window.Status().Heard != 0 || window.Status().Baud != 19200; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatalf("the rate change never showed: %+v", window.Status())
+		}
+	}
 	if out, isErr := h.call("send_command", map[string]any{"command": "show clock"}); !isErr || !strings.Contains(out, "nothing was sent") {
-		t.Errorf("send_command on joining, before the device answered:\n%s", out)
+		t.Errorf("send_command at a new rate, before the device answered:\n%s", out)
+	}
+	if err := window.SetBaud(9600); err != nil {
+		t.Fatal(err)
 	}
 	if out, isErr := h.call("send_keys", map[string]any{"key": "enter"}); isErr || !strings.Contains(out, "Switch#") {
-		t.Fatalf("Enter on joining:\n%s", out)
+		t.Fatalf("Enter after the rate change:\n%s", out)
 	}
 	if out, isErr := h.call("send_command", map[string]any{"command": "show clock"}); isErr || !strings.Contains(out, "output of show clock") {
 		t.Fatalf("send_command through the shared console:\n%s", out)

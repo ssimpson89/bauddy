@@ -37,6 +37,14 @@ func pausedByUser(p Port) bool {
 	return ok && s.Status().Paused
 }
 
+// heardOnConsole reports whether the shared console has heard the device
+// answer at baud, from anyone's typing: joining the user's window, the tool
+// needn't press Enter to prove a rate the user is already working at.
+func heardOnConsole(p Port, baud int) bool {
+	s, ok := p.(sharedPort)
+	return ok && s.Status().Heard == baud && baud != 0
+}
+
 // keyboard takes the keyboard for one tool call. The returned context ends
 // if the user stops the tool; why then says how it was stopped. Call
 // release when done.
