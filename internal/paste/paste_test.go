@@ -239,7 +239,8 @@ func TestStopsWhenNothingEchoes(t *testing.T) {
 
 func TestPatterns(t *testing.T) {
 	questions := []string{"Proceed with reload? [confirm]", "Destination filename [startup-config]? ", "Delete flash:x? [yes/no]: ",
-		"Do you want to continue? [yes,no] (no) ", " --More-- ", "-- MORE --, next page: Space", "---(more 42%)---", "-- [Q quit|D dump|down]"}
+		"Do you want to continue? [yes,no] (no) ", " --More-- ", "-- MORE --, next page: Space", "---(more 42%)---", "-- [Q quit|D dump|down]",
+		":", "(END)"} // less, after its first page and at the end
 	for _, q := range questions {
 		if !question.MatchString(q) {
 			t.Errorf("question not recognised: %q", q)
@@ -300,5 +301,69 @@ func TestNoOutputAfterDoubleCR(t *testing.T) {
 	p := &Pacer{Write: echo, Rx: rx, Baud: 115200, Prompt: "root@fw:~ # "}
 	if err := p.Run(ctx, Lines("true\ngrep zzz /etc/hosts\n"), func(int) {}); err != nil {
 		t.Fatalf("err = %v, want both lines run with the prompt seen after each", err)
+	}
+}
+
+// less on a serial console shows the file's name where its prompt would be,
+// so it's known by the command: once it goes quiet, stop, rather than wait a
+// minute for a prompt that won't come.
+func TestFullScreenProgramStopsQuickly(t *testing.T) {
+	t.Parallel()
+	rx := make(chan []byte, 64)
+	pager := func(b []byte) error { // echoes, and after Enter shows a page of the file
+		for _, ch := range b {
+			if ch == '\r' {
+				rx <- []byte("\r\r\n#!/bin/sh\r\n# rc.conf defaults\r\n/etc/defaults/rc.conf")
+			} else {
+				rx <- []byte{ch}
+			}
+		}
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	p := &Pacer{Write: pager, Rx: rx, Baud: 115200, Prompt: "root@fw:~ # "}
+	t0 := time.Now()
+	err := p.Run(ctx, Lines("less /etc/defaults/rc.conf\n"), func(int) {})
+	var se *StopError
+	if !errors.As(err, &se) || !strings.Contains(se.Reason, "full-screen") || time.Since(t0) > 5*time.Second {
+		t.Fatalf("err = %v after %v, want a quick stop for a full-screen program", err, time.Since(t0))
+	}
+	for cmd, want := range map[string]bool{
+		"less /var/log/messages": true, "dmesg | less": true, "man ls": true, "top": true, "vi /etc/hosts": true,
+		"top -b -n 1": true, // matched, but it prints and returns to the prompt first
+		"  less file": true, "sudo less /var/log/auth.log": true, "/usr/bin/less file": true,
+		"topology": false, "show manager": false, "cat file": false, "echo more": false,
+	} {
+		if got := fullScreen(cmd); got != want {
+			t.Errorf("fullScreen(%q) = %v, want %v", cmd, got, want)
+		}
+	}
+}
+
+// At a prompt bauddy doesn't recognise, a quiet screen usually means ready;
+// a pager's isn't, or the next line would be typed into it.
+func TestNoTypingIntoAPagerAtAnUnknownPrompt(t *testing.T) {
+	t.Parallel()
+	rx := make(chan []byte, 64)
+	var wrote []byte
+	pager := func(b []byte) error {
+		wrote = append(wrote, b...)
+		for _, ch := range b {
+			if ch == '\r' {
+				rx <- []byte("\r\n# rc.conf defaults\r\n/etc/defaults/rc.conf")
+			} else {
+				rx <- []byte{ch}
+			}
+		}
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	p := &Pacer{Write: pager, Rx: rx, Baud: 115200, Prompt: ""}
+	err := p.Run(ctx, Lines("less /etc/defaults/rc.conf\necho next\n"), func(int) {})
+	var se *StopError
+	if !errors.As(err, &se) || !strings.Contains(se.Reason, "full-screen") || strings.Contains(string(wrote), "echo next") {
+		t.Fatalf("err = %v, typed %q: want a stop at the pager, with the next line not typed", err, wrote)
 	}
 }
