@@ -1,10 +1,10 @@
 module github.com/ssimpson89/bauddy
 
-go 1.26.0
+go 1.26.7
 
 require (
-	charm.land/bubbletea/v2 v2.1.0
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/bubbletea/v2 v2.1.1
+	charm.land/lipgloss/v2 v2.1.0
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/term v0.2.2
@@ -13,7 +13,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2
 	go.bug.st/serial v1.8.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 )
 
 require (
